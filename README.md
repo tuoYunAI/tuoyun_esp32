@@ -5,7 +5,7 @@
 
 ## 介绍
 
-tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 的 ai 后端/小程序而基于原来 xiaozhi 的 esp32 的开源项目，
+tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 改为接入拓云后台而基于原来 xiaozhi 的 esp32 的开源项目，
 
 ## 拓云 AI 介绍
 
