@@ -132,7 +132,8 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 改为接入拓云�
 
 ![Kconfig配置示例](docs/tuoyun/modify_kconfig3.png)
 
-也可以在 `menuconfig` 中进行配置。
+也可以在 `menuconfig` 中进行配置。如图所示
+![menuconfig配置示例](docs/tuoyun/modify_kconfig4.png)
 
 ##### 3.4 修改蓝牙配置
 
