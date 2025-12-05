@@ -115,7 +115,7 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 的 ai 后端/小�
 
 ##### 3.2 修改配置文件
 
-在工程的 `Kconfig.projbuild` 文件中添加以下配置项：
+在工程的 `Kconfig.projbuild` 文件中添加以下配置项(本工程已经有这些配置项，修改即可)：
 
 - 产品型号
 - 固件编号
