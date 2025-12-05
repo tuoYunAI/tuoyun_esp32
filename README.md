@@ -22,9 +22,12 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 的 ai 后端/小�
 - TTS 语音设置
 - 大模型参数调优
 - 角色智能体管理和配置
-  ![微信小程序截图](docs/tuoyun/wechat-miniprogram.jpg)
-  ![角色管理](docs/tuoyun/wechat-mini-agent.jpg)
-  ![角色设置](docs/tuoyun/wechat-mini-agent-set.png)
+
+<div style="display: flex; justify-content: space-between;">
+  <img src="docs/tuoyun/wechat-miniprogram.jpg" width="200" alt="微信小程序截图" />
+  <img src="docs/tuoyun/wechat-mini-agent.jpg" width="200" alt="角色管理" />
+  <img src="docs/tuoyun/wechat-mini-agent-set.png" width="200" alt="角色设置" />
+</div>
 
 #### 👥 用户运营
 
