@@ -69,6 +69,84 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 的 ai 后端/小�
 
 ### 接入说明
 
+#### 1. 拓云 AI 厂商合作伙伴账户注册
+
+为了接入拓云平台，需要先注册一个厂商账户，后续的产品管理、固件 OTA 管理等功能都在这个后台完成。
+
+👉 [拓云厂商注册地址](https://agent.lovaiot.com/)
+
+#### 2. 合作伙伴型号管理
+
+拓云平台定义了三种基础物料型号，用于组成一个完整的 AI 硬件产品：
+
+- **玩具型号**：产品的外观形态（如 AI 小熊、AI 机器人等）
+- **控制板型号**：硬件控制板型号（如 ESP32-S3 开发板）
+- **固件**：运行在控制板上的固件版本
+
+##### 2.1 控制板添加
+
+登录厂商后台，点击左侧的"型号管理" → "控制板型号" → "添加控制板"，填写控制板信息。
+
+![添加控制板](docs/tuoyun/add_board.png)
+
+##### 2.2 玩具型号添加
+
+点击左侧"玩具型号管理" → "添加玩具型号"，填写产品信息。
+
+![添加玩具型号](docs/tuoyun/add_toy.png)
+
+##### 2.3 固件添加
+
+点击左侧"固件管理" → "添加固件"，在"适用产品"中选择上面添加的玩具型号。
+
+![添加固件](docs/tuoyun/add_firmware.png)
+
+#### 3. ESP32 固件修改
+
+拓云服务端完全兼容小智协议，并在此基础上进行了功能更新和扩展。
+
+##### 3.1 获取固件源码
+
+从 [tuoyun-robot-esp32](https://github.com/tuoYunAI/tuoyun_esp32) 获取固件源码，或联系拓云官方人员获取。
+
+##### 3.2 修改配置文件
+
+在工程的 `Kconfig.projbuild` 文件中添加以下配置项：
+
+- 产品型号
+- 固件编号
+- 主板型号
+- 设备厂商（需要联系拓云官方人员获取）
+
+![Kconfig配置示例](docs/tuoyun/modify_kconfig1.png)
+
+![Kconfig配置示例](docs/tuoyun/modify_kconfig2.png)
+
+##### 3.3 修改 OTA 地址
+
+```kconfig
+config OTA_URL
+    string "Default OTA URL"
+    default "https://ota.lovaiot.com/ota/"
+    help
+        The application will access this URL to check for new firmwares and server address.
+```
+
+也可以在 `menuconfig` 中进行配置。
+
+#### 4. 设备使用
+
+重新烧录固件后，用户可以通过"拓云 AI"小程序完成以下操作：
+
+![拓云AI小程序二维码](docs/tuoyun/wechat-qrcode.png)
+
+1. **添加设备**：扫描上方二维码进入拓云 AI 小程序
+2. **激活设备**：使用激活码激活设备
+3. **蓝牙配网**：通过蓝牙完成网络配置
+4. **绑定智能体**：选择并绑定 AI 智能体角色
+
+配置完成后即可开始使用 AI 对话功能。
+
 ## 关于项目
 
 这是一个基于虾哥开源的 ESP32 项目的修改的项目，以 MIT 许可证发布，允许任何人免费使用，修改或用于商业用途。
