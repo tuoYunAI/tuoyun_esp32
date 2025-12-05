@@ -10,6 +10,7 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 改为接入拓云�
 ## 拓云 AI 介绍
 
 拓云 AI IoT 平台为硬件厂商提供一站式大模型接入解决方案，通过开源 SDK 快速集成 DeepSeek、通义千问、豆包等主流大模型，让传统硬件瞬间具备 AI 能力。
+👉 [拓云官网地址](https://www.lovaiot.com/)
 
 ### 核心特性
 
