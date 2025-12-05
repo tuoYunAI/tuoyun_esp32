@@ -134,6 +134,17 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 改为接入拓云�
 
 也可以在 `menuconfig` 中进行配置。
 
+##### 3.4 修改蓝牙配置
+
+为了支持小程序蓝牙配网，需要修改工程里的蓝牙配置，具体步骤如下：
+运行 idf.py menuconfig,选择 Component config 然后选择 Bluetooth ，
+打开 Bluetooth，并设置 Host 为 NimBLE - BLE only
+具体如下图所示：
+![蓝牙配置](docs/tuoyun/ble1.png)
+![蓝牙配置](docs/tuoyun/ble2.png)
+![蓝牙配置](docs/tuoyun/ble3.png)
+![蓝牙配置](docs/tuoyun/ble4.png)
+
 #### 4. 设备使用
 
 重新烧录固件后，用户可以通过"拓云 AI"小程序完成以下操作：

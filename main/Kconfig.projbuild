@@ -673,25 +673,25 @@ config RECEIVE_CUSTOM_MESSAGE
 
 config MANUFACTURER_PRODUCT_TYPE
     string "PRODUCT TYPE"
-    default "xiaozhi-ai-001"
+    default "nologo_zhixing_box_test"
     help
         产品的型号
 
 config MANUFACTURER_BOARD_TYPE
     string "BOARD TYPE"
-    default "kevin-sp-v4-dev"
+    default "nologo_zhixing_test"
     help
         主控板的型号
 
 config MANUFACTURER_APPLICATION_TYPE
     string "APPLICATION TYPE"
-    default "kevin-sp-v4-mcp"
+    default "nologo_zhixing_box_firmware"
     help
         固件编号
 
 config MANUFACTURER_CODE
     string "Manufacturer Code"
-    default "5143932590709531730"
+    default "5586673487624577024"
     help
        设备厂商编码(UID)
 
