@@ -1,4 +1,7 @@
-# 拓云 tuoyun_esp32 项目
+<div align="center">
+  <img src="https://avatars.githubusercontent.com/u/243039265?s=200&v=4" alt="拓云 Logo" width="100" />
+  <h1>拓云 tuoyun_esp32 项目</h1>
+</div>
 
 ## 介绍
 
