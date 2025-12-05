@@ -1,7 +1,5 @@
 # 拓云 tuoyun_esp32 项目
 
-（中文 | [English](README_en.md)）
-
 ## 介绍
 
 tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 的 ai 后端/小程序而基于原来 xiaozhi 的 esp32 的开源项目，
@@ -23,6 +21,10 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 的 ai 后端/小�
 - 一键配网连接
 - TTS 语音设置
 - 大模型参数调优
+- 角色智能体管理和配置
+  ![微信小程序截图](docs/tuoyun/wechat-miniprogram.jpg)
+  ![角色管理](docs/tuoyun/wechat-mini-agent.jpg)
+  ![角色设置](docs/tuoyun/wechat-mini-agent-set.png)
 
 #### 👥 用户运营
 
