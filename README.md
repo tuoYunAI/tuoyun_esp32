@@ -128,13 +128,7 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 的 ai 后端/小�
 
 ##### 3.3 修改 OTA 地址
 
-```kconfig
-config OTA_URL
-    string "Default OTA URL"
-    default "https://ota.lovaiot.com/ota/"
-    help
-        The application will access this URL to check for new firmwares and server address.
-```
+![Kconfig配置示例](docs/tuoyun/modify_kconfig3.png)
 
 也可以在 `menuconfig` 中进行配置。
 
