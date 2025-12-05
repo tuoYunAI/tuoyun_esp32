@@ -144,8 +144,9 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 改为接入拓云�
 
 配置完成后即可开始使用 AI 对话功能。
 
-- vip 体验购买
-  需要说明的是，大模型对话模型并非免费,可以点击小程序的 vip 购买一下，如果只是为了体验，可以先买一个 3 元的包月服务
+#### vip 体验购买
+
+需要说明的是，大模型对话模型并非免费,可以点击小程序的 vip 购买一下，如果只是为了体验，可以先买一个 3 元的包月服务
 
 <div style="display: flex; justify-content: space-between;">
   <img src="docs/tuoyun/vip1.png" width="300" alt="VIP购买入口" />
