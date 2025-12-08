@@ -167,6 +167,12 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 改为接入拓云�
   <img src="docs/tuoyun/vip.jpg" width="300" alt="VIP套餐选择" />
 </div>
 
+## QQ 交流群
+
+<div style="display: flex; justify-content: space-between;">
+  <img src="docs/tuoyun/tuoyun_qq_qun.jpg" width="300" alt="交流群" />
+</div>
+
 ## 关于项目
 
 这是一个基于虾哥开源的 ESP32 项目的修改的项目，以 MIT 许可证发布，允许任何人免费使用，修改或用于商业用途。
