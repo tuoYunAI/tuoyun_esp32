@@ -14,9 +14,9 @@
 #include <nvs_flash.h>
 #include "ssid_manager.h"
 #include "system_info.h"
-
 #include "wifi_provisioning/manager.h"
 #include "wifi_provisioning/scheme_ble.h"
+#include "wifi_station.h"
 
 
 #define TAG "WifiConfigurationBluetooth"
@@ -26,7 +26,9 @@
 #define WIFI_FAIL_BIT      BIT1
 
 
-esp_err_t prov_mac_data_handler(uint32_t session_id, const uint8_t *inbuf, ssize_t inlen,
+static std::string g_board_unique_code;
+
+esp_err_t prov_unique_code_data_handler(uint32_t session_id, const uint8_t *inbuf, ssize_t inlen,
                                           uint8_t **outbuf, ssize_t *outlen, void *priv_data)
 {
     if (inbuf) {
@@ -34,7 +36,9 @@ esp_err_t prov_mac_data_handler(uint32_t session_id, const uint8_t *inbuf, ssize
     }
     
     std::string board_json = R"({)";
-    board_json += R"("mac":")" + SystemInfo::GetMacAddress() + R"(",)";
+    //board_json += R"("mac":")" + SystemInfo::GetMacAddress() + R"(",)";
+    board_json += R"("code":")" + g_board_unique_code + R"(",)";
+    board_json += R"("type":")" + std::string(CONFIG_MANUFACTURER_PRODUCT_TYPE) + R"(",)";
     board_json += R"("vendor":")" + std::string(CONFIG_MANUFACTURER_CODE) + R"(")";
     board_json += R"(})";
 
@@ -75,18 +79,24 @@ WifiConfigurationBluetooth& WifiConfigurationBluetooth::GetInstance() {
 
 
 
-void WifiConfigurationBluetooth::Start()
+void WifiConfigurationBluetooth::Start(std::string unique_code)
 {
+    g_board_unique_code = unique_code;
 
+    auto& wifi_station = WifiStation::GetInstance();
+    if (wifi_station.IsConnected()) {
+        ESP_LOGI(TAG, "WiFi already connected, no need to start Bluetooth WiFi configuration.");
+        wifi_station.Stop();
+    }
     ESP_LOGI(TAG, "Starting Bluetooth WiFi configuration...");
-
+    
     ESP_ERROR_CHECK(esp_netif_init());
-    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
-    assert(sta_netif);
+
+    ap_netif_= esp_netif_create_default_wifi_sta();
+    assert(ap_netif_);
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
-
 
     // Register event handlers
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_PROV_EVENT,
@@ -140,11 +150,11 @@ void WifiConfigurationBluetooth::Start()
         ESP_LOGI(TAG, "%02x", uuid[i]);
     }
 
-    wifi_prov_mgr_endpoint_create("prov_mac");
+    wifi_prov_mgr_endpoint_create("prov_unique_code");
 
     // 启动配网服务
     ESP_ERROR_CHECK( wifi_prov_mgr_start_provisioning(security, nullptr, service_name, nullptr) );
-    wifi_prov_mgr_endpoint_register("prov_mac", prov_mac_data_handler, NULL);
+    wifi_prov_mgr_endpoint_register("prov_unique_code", prov_unique_code_data_handler, NULL);
 
     ESP_LOGI(TAG, "Waiting for Bluetooth WiFi configuration to complete...");   
 

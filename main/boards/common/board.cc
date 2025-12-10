@@ -9,6 +9,7 @@
 #include <esp_ota_ops.h>
 #include <esp_chip_info.h>
 #include <esp_random.h>
+#include "esp_flash.h"
 
 #define TAG "Board"
 
@@ -66,7 +67,30 @@ Led* Board::GetLed() {
     static NoLed led;
     return &led;
 }
+std::string Board::GetBoardUniqueCode() {
+    
+    uint64_t chip_id = 0;
+    // 参数1: chip - 指向 Flash 芯片的句柄。
+    //        传 NULL 表示读取主 SPI Flash (即代码所在的 Flash)。
+    esp_err_t err = esp_flash_read_unique_chip_id(NULL, &chip_id);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read chip ID: %s", esp_err_to_name(err));
+        return "";
+    }
 
+    char chip_id_buf[17] = {0};
+    snprintf(chip_id_buf, sizeof(chip_id_buf), "%02x%02x%02x%02x%02x%02x%02x%02x", 
+    (u_int8_t)(chip_id>>56 & 0xFF),
+    (u_int8_t)((chip_id>>48) & 0xFF), 
+    (u_int8_t)((chip_id>>40) & 0xFF), 
+    (u_int8_t)((chip_id>>32) & 0xFF),
+    (u_int8_t)((chip_id>>24) & 0xFF), 
+    (u_int8_t)((chip_id>>16) & 0xFF), 
+    (u_int8_t)((chip_id>>8) & 0xFF), 
+    (u_int8_t)(chip_id & 0xFF));
+
+    return std::string(chip_id_buf);
+}
 std::string Board::GetSystemInfoJson() {
     /* 
         {
@@ -112,6 +136,7 @@ std::string Board::GetSystemInfoJson() {
     json += R"("flash_size":)" + std::to_string(SystemInfo::GetFlashSize()) + R"(,)";
     json += R"("minimum_free_heap_size":")" + std::to_string(SystemInfo::GetMinimumFreeHeapSize()) + R"(",)";
     json += R"("mac_address":")" + SystemInfo::GetMacAddress() + R"(",)";
+    json += R"("unique_code":")" + GetBoardUniqueCode() + R"(",)";
     json += R"("uuid":")" + uuid_ + R"(",)";
     json += R"("chip_model_name":")" + SystemInfo::GetChipModelName() + R"(",)";
 
@@ -177,4 +202,8 @@ std::string Board::GetSystemInfoJson() {
     // Close the JSON object
     json += R"(})";
     return json;
+}
+
+bool Board::EnterActivationMode() {
+    return false;
 }

@@ -33,6 +33,12 @@ WifiBoard::WifiBoard() {
 std::string WifiBoard::GetBoardType() {
     return "wifi";
 }
+bool WifiBoard::EnterActivationMode() {
+    ESP_LOGI(TAG, "Entering activation mode...");
+    wifi_config_mode_ = true;
+    EnterWifiConfigMode();
+    return true;
+}
 
 void WifiBoard::EnterWifiConfigMode() {
     
@@ -94,7 +100,7 @@ void WifiBoard::EnterBluetoothWifiConfigMode() {
     application.SetDeviceState(kDeviceStateWifiConfiguring);
 
     auto& bt = WifiConfigurationBluetooth::GetInstance();
-    bt.Start();
+    bt.Start(GetBoardUniqueCode());
 
     std::string hint = Lang::Strings::ENTERING_WIFI_CONFIG_MODE;
     hint += "\n\n";

@@ -28,10 +28,9 @@ private:
     esp_netif_t* ap_netif_ = nullptr;
     std::vector<wifi_ap_record_t> ap_records_;
 
-
 public:
     static WifiConfigurationBluetooth& GetInstance();
-    void Start();
+    void Start(std::string unique_code);
     void Stop();
 
 private:
