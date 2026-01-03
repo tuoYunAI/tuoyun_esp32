@@ -23,16 +23,15 @@
 #include "wake_word.h"
 #include "protocol.h"
 
-
 /*
  * There are two types of audio data flow:
  * 1. (MIC) -> [Processors] -> {Encode Queue} -> [Opus Encoder] -> {Send Queue} -> (Server)
  * 2. (Server) -> {Decode Queue} -> [Opus Decoder] -> {Playback Queue} -> (Speaker)
  *
  * We use one task for MIC / Speaker / Processors, and one task for Opus Encoder / Opus Decoder.
- * 
+ *
  * Decode Queue and Send Queue are the main queues, because Opus packets are quite smaller than PCM packets.
- * 
+ *
  */
 
 #define OPUS_FRAME_DURATION_MS 60
@@ -46,50 +45,54 @@
 #define AUDIO_POWER_TIMEOUT_MS 15000
 #define AUDIO_POWER_CHECK_INTERVAL_MS 1000
 
+#define AS_EVENT_AUDIO_TESTING_RUNNING (1 << 0)
+#define AS_EVENT_WAKE_WORD_RUNNING (1 << 1)
+#define AS_EVENT_AUDIO_PROCESSOR_RUNNING (1 << 2)
+#define AS_EVENT_PLAYBACK_NOT_EMPTY (1 << 3)
 
-#define AS_EVENT_AUDIO_TESTING_RUNNING      (1 << 0)
-#define AS_EVENT_WAKE_WORD_RUNNING          (1 << 1)
-#define AS_EVENT_AUDIO_PROCESSOR_RUNNING    (1 << 2)
-#define AS_EVENT_PLAYBACK_NOT_EMPTY         (1 << 3)
-
-struct AudioServiceCallbacks {
+struct AudioServiceCallbacks
+{
     std::function<void(void)> on_send_queue_available;
-    std::function<void(const std::string&)> on_wake_word_detected;
+    std::function<void(const std::string &)> on_wake_word_detected;
     std::function<void(bool)> on_vad_change;
     std::function<void(void)> on_audio_testing_queue_full;
+    std::function<void(const int16_t *audio_data, size_t bytes_per_channel, size_t channels)> on_audio_data_processed;
 };
 
-
-enum AudioTaskType {
+enum AudioTaskType
+{
     kAudioTaskTypeEncodeToSendQueue,
     kAudioTaskTypeEncodeToTestingQueue,
     kAudioTaskTypeDecodeToPlaybackQueue,
 };
 
-struct AudioTask {
+struct AudioTask
+{
     AudioTaskType type;
     std::vector<int16_t> pcm;
     uint32_t timestamp;
 };
 
-struct DebugStatistics {
+struct DebugStatistics
+{
     uint32_t input_count = 0;
     uint32_t decode_count = 0;
     uint32_t encode_count = 0;
     uint32_t playback_count = 0;
 };
 
-class AudioService {
+class AudioService
+{
 public:
     AudioService();
     ~AudioService();
 
-    void Initialize(AudioCodec* codec);
+    void Initialize(AudioCodec *codec);
     void Start();
     void Stop();
     void EncodeWakeWord();
     std::unique_ptr<AudioStreamPacket> PopWakeWordPacket();
-    const std::string& GetLastWakeWord() const;
+    const std::string &GetLastWakeWord() const;
     bool IsVoiceDetected() const { return voice_detected_; }
     bool IsIdle();
     bool IsWakeWordRunning() const { return xEventGroupGetBits(event_group_) & AS_EVENT_WAKE_WORD_RUNNING; }
@@ -101,17 +104,20 @@ public:
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
 
-    void SetCallbacks(AudioServiceCallbacks& callbacks);
+    void SetCallbacks(AudioServiceCallbacks &callbacks);
 
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
-    void PlaySound(const std::string_view& sound);
-    bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
+    void PlaySound(const std::string_view &sound);
+    bool ReadAudioData(std::vector<int16_t> &data, int sample_rate, int samples);
     void ResetDecoder();
-    void SetModelsList(srmodel_list_t* models_list);
+    void SetModelsList(srmodel_list_t *models_list);
+    void SetAfeDataProcessedCallback(std::function<void(const int16_t *audio_data, size_t total_bytes)> callback);
+    void SetVadStateChangeCallback(std::function<void(bool speaking)> callback);
+    void SetAudioDataProcessedCallback(std::function<void(const int16_t *audio_data, size_t bytes_per_channel, size_t channels)> callback);
 
 private:
-    AudioCodec* codec_ = nullptr;
+    AudioCodec *codec_ = nullptr;
     AudioServiceCallbacks callbacks_;
     std::unique_ptr<AudioProcessor> audio_processor_;
     std::unique_ptr<WakeWord> wake_word_;
@@ -122,7 +128,7 @@ private:
     OpusResampler reference_resampler_;
     OpusResampler output_resampler_;
     DebugStatistics debug_statistics_;
-    srmodel_list_t* models_list_ = nullptr;
+    srmodel_list_t *models_list_ = nullptr;
 
     EventGroupHandle_t event_group_;
 
@@ -153,7 +159,7 @@ private:
     void AudioInputTask();
     void AudioOutputTask();
     void OpusCodecTask();
-    void PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm);
+    void PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t> &&pcm);
     void SetDecodeSampleRate(int sample_rate, int frame_duration);
     void CheckAndUpdateAudioPowerState();
 };
