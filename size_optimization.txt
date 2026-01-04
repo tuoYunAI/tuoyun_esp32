@@ -1,0 +1,72 @@
+# 二进制文件体积优化方案
+
+## 当前状态
+- 二进制大小：5.2MB (0x530570)
+- OTA分区大小：4MB (0x3f0000)
+- 需要减少：1.3MB (0x140570)
+
+## 优化方案（按效果排序）
+
+### 1. 禁用日志输出（可节省 ~200-500KB）
+在 sdkconfig 或通过 menuconfig 设置：
+```
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y  # 或 ERROR/NONE
+```
+
+### 2. 禁用未使用的LVGL字体（可节省 ~300-800KB）
+当前启用了：
+- CONFIG_LV_FONT_MONTSERRAT_20=y
+- CONFIG_LV_FONT_MONTSERRAT_40=y  
+- CONFIG_LV_FONT_DEFAULT_MONTSERRAT_40=y
+
+如果只用中文，可以禁用大的 Montserrat 字体，只保留必要的。
+
+### 3. 减少音频资源（当前 ~300KB）
+- 移除不需要的通用音频（common/*.ogg）
+- 考虑降低音频比特率
+
+### 4. 禁用不必要的组件
+检查并禁用：
+- Bluetooth（如果不用）
+- Camera支持（如果不用）  
+- 其他未使用的外设驱动
+
+### 5. 使用更激进的编译优化
+```
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_DISABLE=y  # 禁用断言
+```
+
+### 6. 减少LWIP缓冲区大小
+减小网络缓冲区可以节省一些空间
+
+### 7. 方案A：扩大OTA分区（如果Flash足够）
+修改分区表 partitions/v2/16m.csv，给OTA分区更多空间。
+当前每个OTA分区 0x3f0000 (4MB)，可以增加到 0x500000 (5MB)
+
+修改 partitions/v2/16m.csv：
+```csv
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     0x9000,    0x4000,
+otadata,  data, ota,     0xd000,    0x2000,
+phy_init, data, phy,     0xf000,    0x1000,
+ota_0,    app,  ota_0,   0x20000,   0x580000,  # 增加到5.5MB
+ota_1,    app,  ota_1,   ,          0x580000,  # 增加到5.5MB
+assets,   data, spiffs,  0xB20000,  5376K      # 缩小assets分区
+```
+
+### 8. 方案B：移除表情/Emoji资源
+如果不需要所有的 emoji 集合，可以：
+```
+# CONFIG_DEFAULT_EMOJI_COLLECTION 设为最小集合
+```
+
+## 快速修复建议
+
+修改 sdkconfig.defaults 或运行 `idf.py menuconfig` 并设置：
+
+1. Component config → Log output → Default log verbosity → **Warning** 或 **Error**
+2. Component config → LVGL configuration → Font usage → 只保留必要的字体
+3. Component config → ESP System Settings → Panic handler → **Silent reboot**
+4. Component config → FreeRTOS → **优化任务栈大小**
+
+或者直接修改分区表使用更大的OTA分区（推荐）。

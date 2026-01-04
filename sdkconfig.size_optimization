@@ -1,0 +1,65 @@
+# EchoEar 二进制体积优化配置
+# 将这些配置添加到 sdkconfig.defaults 或通过 idf.py menuconfig 设置
+
+# ============= 日志优化（可节省 200-500KB） =============
+# 将默认日志级别改为 Warning，大幅减少日志字符串
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_LOG_DEFAULT_LEVEL=2
+
+# 禁用颜色日志可节省一点空间
+# CONFIG_LOG_COLORS=n
+
+# ============= 编译器优化 =============
+# 已经使用了 CONFIG_COMPILER_OPTIMIZATION_SIZE=y (优化体积)
+# 可以考虑禁用断言进一步减小（注意：会降低调试能力）
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_DISABLE=y
+
+# ============= LVGL 字体优化（可节省 300-800KB） =============
+# 如果不需要大字体，禁用 MONTSERRAT_40
+# CONFIG_LV_FONT_MONTSERRAT_40=n
+# CONFIG_LV_FONT_DEFAULT_MONTSERRAT_40=n
+
+# 如果只用20号字体：
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_DEFAULT_MONTSERRAT_20=y
+
+# ============= 系统优化 =============
+# Panic handler 使用 Silent reboot（不打印详细信息）
+# CONFIG_ESP_SYSTEM_PANIC_SILENT_REBOOT=y
+
+# 减小任务看门狗检查间隔
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+
+# ============= 网络优化 =============
+# 如果可以，减小 LWIP 缓冲区
+CONFIG_LWIP_TCP_MSS=1440
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=5760
+CONFIG_LWIP_TCP_WND_DEFAULT=5760
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=6
+CONFIG_LWIP_UDP_RECVMBOX_SIZE=6
+
+# ============= FreeRTOS 优化 =============
+# 减小默认任务栈大小（如果应用允许）
+# CONFIG_ESP_MAIN_TASK_STACK_SIZE=3072  # 默认通常是4096
+
+# ============= Bluetooth 优化 =============
+# 如果不使用蓝牙，可以完全禁用
+# CONFIG_BT_ENABLED=n
+
+# ============= ESP-SR (语音识别)优化 =============
+# 检查是否使用了大的唤醒词模型，可以切换到更小的模型
+
+# ============= 其他组件 =============
+# 禁用示例配置（如果有）
+# CONFIG_EXAMPLE_xxx=n
+
+# ============= 音频优化 =============
+# 考虑降低 OGG 音频文件的采样率和比特率
+# 或移除不常用的音频提示音
+
+# ============= 注意事项 =============
+# 1. 修改后需要清理构建: idf.py fullclean
+# 2. 然后重新构建: idf.py build
+# 3. 测试所有功能确保没有被破坏
+# 4. 某些优化会影响调试能力，生产环境可用，开发时慎用
