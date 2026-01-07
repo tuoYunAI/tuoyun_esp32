@@ -54,7 +54,7 @@ dependencies:
   espressif/adc_battery_estimation: ^0.2.0
   espressif/esp_new_jpeg: ^0.6.1
   espfriends/beat_detection: ^1.0.0
-  espfriends/audio_doa: ^1.0.0
+  espfriends/audio_doa: ^1.2.0
   espressif2022/echoear_base_control: 0.0.3~1
   # SenseCAP Watcher Board
   wvirgil123/sscma_client:
