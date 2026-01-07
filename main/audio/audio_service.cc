@@ -841,23 +841,23 @@ void AudioService::SetModelsList(srmodel_list_t *models_list)
             } });
 
         // Setup beat detection callback if board supports it
-        // Board &board = Board::GetInstance();
-        // board.SetAfeDataProcessCallback([](const int16_t *audio_data, size_t total_bytes)
-        //                                 {
-        //                                     // This will be overridden by board-specific implementation (e.g., EspS3Cat)
-        //                                 });
+        Board &board = Board::GetInstance();
+        board.SetAfeDataProcessCallback([](const int16_t *audio_data, size_t total_bytes)
+                                        {
+                                            // This will be overridden by board-specific implementation (e.g., EspS3Cat)
+                                        });
 
-        // // Setup VAD state change callback if board supports it
-        // board.SetVadStateChangeCallback([](bool speaking)
-        //                                 {
-        //                                     // This will be overridden by board-specific implementation (e.g., EspS3Cat)
-        //                                 });
+        // Setup VAD state change callback if board supports it
+        board.SetVadStateChangeCallback([](bool speaking)
+                                        {
+                                            // This will be overridden by board-specific implementation (e.g., EspS3Cat)
+                                        });
 
-        // // Setup audio data processed callback if board supports it
-        // board.SetAudioDataProcessedCallback([](const int16_t *audio_data, size_t bytes_per_channel, size_t channels)
-        //                                     {
-        //                                         // This will be overridden by board-specific implementation (e.g., EspS3Cat)
-        //                                     });
+        // Setup audio data processed callback if board supports it
+        board.SetAudioDataProcessedCallback([](const int16_t *audio_data, size_t bytes_per_channel, size_t channels)
+                                            {
+                                                // This will be overridden by board-specific implementation (e.g., EspS3Cat)
+                                            });
     }
 }
 
