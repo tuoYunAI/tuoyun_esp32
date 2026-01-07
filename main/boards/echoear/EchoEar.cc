@@ -24,6 +24,7 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include "audio_analysis.h"
+#include "touch_sensor.h"
 
 #define TAG "EchoEar"
 
@@ -405,7 +406,7 @@ private:
     PwmBacklight *backlight_ = nullptr;
     esp_timer_handle_t touchpad_timer_;
     esp_lcd_touch_handle_t tp; // LCD touch handle
-
+    TouchSensor *touch_sensor_;
     AudioAnalysis *audio_analysis_;
     // virtual void SetAfeDataProcessCallback(std::function<void(const int16_t *audio_data, size_t total_bytes)> callback) override;
     // virtual void SetVadStateChangeCallback(std::function<void(bool speaking)> callback) override;
@@ -611,6 +612,20 @@ private:
 
         gpio_set_level(POWER_CTRL, 0);
     }
+    void InitializeTouchSensor()
+    {
+        touch_sensor_ = new TouchSensor();
+        if (!touch_sensor_->init())
+        {
+            ESP_LOGE(TAG, "Failed to initialize touch sensor");
+            delete touch_sensor_;
+            touch_sensor_ = nullptr;
+        }
+        else
+        {
+            ESP_LOGI(TAG, "Touch sensor initialized successfully");
+        }
+    }
 
 public:
     EspS3Cat() : boot_button_(BOOT_BUTTON_GPIO)
@@ -622,7 +637,9 @@ public:
 
         InitializeSpi();
         Initializest77916Display(pcb_verison);
+
         InitializeButtons();
+        InitializeTouchSensor();
         audio_analysis_ = new AudioAnalysis();
         audio_analysis_->Initialize();
         AudioAnalysisMode analysis_mode = AudioAnalysisMode::DISABLED;

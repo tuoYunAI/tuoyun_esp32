@@ -26,6 +26,8 @@ dependencies:
   espressif/esp_codec_dev: ~1.5
   espressif/esp-sr: ~2.2.0
   espressif/button: ~4.1.3
+  espressif/touch_slider_sensor: ^0.2.0
+  espressif/touch_button: ^0.1.0
   espressif/knob: ^1.0.0
   espressif/esp_video:
     version: ==1.3.1 # for compatibility. update version may need to modify this project code.
