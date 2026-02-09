@@ -1,0 +1,1136 @@
+#include "osipparser2/osip_message.h"
+#include "osipparser2/osip_parser.h"
+#include "osipparser2/sdp_message.h"
+#include "osip_adapter.h"
+#include "string.h"
+
+#define TAG             "[SIP]"
+#define LOG_LEVEL_ENABLED  LOG_INFO_LEVEL
+#include "adapter.h"
+
+
+#define SIP_VERSION "SIP/2.0"
+#define SERVER_HOST "server.lovaiot.com"
+#define USER_AGENT  "TUOYUN-AI-TOY/1.0"
+
+// 简单的错误处理宏
+#define CHECK_RET(expr) do { int __rc = (expr); if (__rc != 0) { goto fail; } } while (0)
+
+
+
+
+void free_sip_message(char* sip){
+    if (sip){
+        osip_free(sip);
+    }
+}
+/**
+ * 安全地将字符串转换为整数
+ */
+int safe_str_to_int(const char *s, int *out) {
+    if (!s || !out) return 0;
+    int errno = 0;
+    char *end = NULL;
+    long val = strtol(s, &end, 10); // base 10
+
+    // 没有任何字符被转换
+    if (end == s) return 0;
+
+    // 额外的非空白字符存在（例如 "123abc"）
+    while (*end != '\0') {
+        if (*end != ' ' && *end != '\t' && *end != '\n' && *end != '\r')
+            return 0;
+        end++;
+    }
+
+    // 溢出或范围超出 int
+    //if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) ||
+    //    val > INT_MAX || val < INT_MIN) {
+    //    return 0;
+    //}
+
+    *out = (int)val;
+    return 1;
+}
+
+/**
+ * 安全地将字符串转换为无符号整数
+ */
+int safe_str_to_uint(const char *s, unsigned long *out, int base) {
+    int errno = 0;
+    char *end = NULL;
+    unsigned long val = strtoul(s, &end, base); // base 可传 0 自动识别 0x 前缀
+
+    if (end == s) return 0;
+    // 检查尾部非空白
+    while (*end != '\0') {
+        if (*end != ' ' && *end != '\t' && *end != '\n') return 0;
+        end++;
+    }
+    //if (errno == ERANGE || val > UINT_MAX) return false;
+    *out = val;
+    return 1;
+}
+
+
+
+// 将十六进制字符串转换为字节数组
+// 参数：
+//   hex_str:     十六进制字符串（例如 "48656C6C6F" 或 "48:65:6C:6C:6F"）
+//   hex_array:   输出的字节数组
+//   array_size:  数组的最大大小
+// 返回：成功转换的字节数，失败返回 -1
+int hex_string_to_array(const char *hex_str, uint8_t *hex_array, size_t array_size)
+{
+    if (!hex_str || !hex_array || array_size == 0) {
+        return -1;
+    }
+
+    size_t str_len = strlen(hex_str);
+    size_t byte_count = 0;
+    size_t i = 0;
+    memset(hex_array, 0, array_size); 
+    while (i < str_len && byte_count < array_size) {
+        // 跳过分隔符（空格、冒号、短横线等）
+        while (i < str_len && (hex_str[i] == ' ' || hex_str[i] == ':' || 
+                               hex_str[i] == '-' || hex_str[i] == '\t')) {
+            i++;
+        }
+
+        // 检查是否还有足够的字符
+        if (i + 1 >= str_len) {
+            break;
+        }
+
+        // 获取两个十六进制字符
+        char high_char = hex_str[i];
+        char low_char = hex_str[i + 1];
+
+        // 验证字符是否为有效的十六进制字符
+        if (!isxdigit(high_char) || !isxdigit(low_char)) {
+            return -1;
+        }
+
+        // 转换十六进制字符为数值
+        uint8_t high_nibble = (high_char >= '0' && high_char <= '9') ? 
+                              (high_char - '0') : 
+                              (toupper(high_char) - 'A' + 10);
+        
+        uint8_t low_nibble = (low_char >= '0' && low_char <= '9') ? 
+                             (low_char - '0') : 
+                             (toupper(low_char) - 'A' + 10);
+
+        // 组合成一个字节
+        hex_array[byte_count] = (high_nibble << 4) | low_nibble;
+        byte_count++;
+        i += 2;
+    }
+
+    return (int)byte_count;
+}
+
+// 反向函数：将字节数组转换为十六进制字符串
+int array_to_hex_string(const uint8_t *hex_array, size_t array_len, 
+                        char *hex_str, size_t str_size)
+{
+    if (!hex_array || !hex_str || str_size == 0 || array_len == 0) {
+        return -1;
+    }
+
+    size_t required_size = array_len * 2 + 1; // +1 for '\0'
+
+    if (str_size < required_size) {
+        return -1;
+    }
+
+    char *ptr = hex_str;
+    for (size_t i = 0; i < array_len; i++) {
+        sprintf(ptr, "%02X", hex_array[i]);
+        ptr += 2;
+    }
+    *ptr = '\0';
+
+    return (int)(ptr - hex_str);
+}
+
+
+static inline uint32_t sip_rotl32(uint32_t v, unsigned r) {
+    return (v << r) | (v >> (32u - r));
+}
+
+static inline uint32_t sip_fnv1a32(const void *data, size_t len) {
+    const uint8_t *p = (const uint8_t *)data;
+    uint32_t h = 0x811C9DC5u;
+    for (size_t i = 0; i < len; ++i) {
+        h ^= p[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static inline uint32_t sip_branch_hash(const char *uid,
+                                       const char *device_ip,
+                                       uint32_t cseq,
+                                       uint32_t ticks)
+{
+    uint32_t h = 0x9E3779B9u; // golden ratio
+    if (uid)       h ^= sip_rotl32(sip_fnv1a32(uid,       (uint32_t)strlen(uid)),  5);
+    if (device_ip) h ^= sip_rotl32(sip_fnv1a32(device_ip, (uint32_t)strlen(device_ip)), 11);
+    h ^= sip_rotl32(cseq, 17);
+    h ^= sip_rotl32(ticks, 3);
+    // avalanche
+    h ^= h >> 16; h *= 0x7feb352dU;
+    h ^= h >> 15; h *= 0x846ca68bU;
+    h ^= h >> 16;
+    return h;
+}
+
+// 生成形如 "z9hG4bK-<8位十六进制>" 的 branch
+static inline void sip_generate_branch(char *out,
+                                       size_t out_sz,
+                                       const char *uid,
+                                       const char *device_ip,
+                                       uint32_t cseq)
+{
+    if (!out || out_sz == 0) return;
+
+    uint32_t ticks = (uint32_t)adapter_get_system_ms();
+
+    uint32_t h = sip_branch_hash(uid, device_ip, cseq, ticks);
+    // 确保以 RFC3261 魔法串开头
+    // 分支长度控制在 64 字节以内（本实现远小于该值）
+    (void)snprintf(out, out_sz, "z9hG4bK-%08X", (unsigned)h);
+}
+
+
+// 生成 From 的 tag（仅 token 字符，16位十六进制）
+static inline void sip_generate_tag(char *out,
+                                    size_t out_sz,
+                                    const char *uid,
+                                    const char *device_ip,
+                                    const char *call_id,
+                                    uint32_t cseq)
+{
+    if (!out || out_sz == 0) return;
+
+    uint32_t ticks = (uint32_t)adapter_get_system_ms();
+
+    uint32_t h1 = sip_branch_hash(uid, device_ip, cseq, ticks);
+    uint32_t h2 = h1 ^ (call_id ? sip_rotl32(sip_fnv1a32(call_id, (uint32_t)strlen(call_id)), 7) : 0xA5A5A5A5u);
+    (void)snprintf(out, out_sz, "%08X%08X", (unsigned)h1, (unsigned)h2);
+}
+
+/**
+ * 组装一个 SIP REGISTER 报文并输出为字符串。
+ * 参数：
+ *    param:    注册参数结构体指针
+ * 
+ * 输出：
+ *    out_msg:  指向已分配的完整报文字符串（用 osip_free 释放）
+ *    out_len:  报文长度
+ * 
+ * 返回：0 成功，非0失败
+ * 
+ */
+int build_register(sip_register_param_ptr param, char **out_msg, size_t *out_len)
+{
+    if (!param || !param->uid || !param->device_ip || !out_msg || !out_len) return -1;
+
+    osip_message_t *msg = NULL;
+    char buf[256];
+
+    CHECK_RET(osip_message_init(&msg));
+
+    // 请求行：REGISTER sip:server.lovaiot.com SIP/2.0
+    osip_message_set_method(msg, osip_strdup("REGISTER"));
+    osip_message_set_version(msg, osip_strdup(SIP_VERSION));
+    CHECK_RET(osip_uri_init(&msg->req_uri));
+    snprintf(buf, sizeof(buf), "sip:%s", SERVER_HOST);
+    CHECK_RET(osip_uri_parse(msg->req_uri, buf));
+
+    // Via: SIP/2.0/MQTT {device-ip};branch=z9hG4bK-123456
+    // 说明：oSIP 对协议标记（MQTT）不做强校验，作为 token 接受
+    osip_via_t *via = NULL;
+    osip_via_init(&via);
+
+    char branch[32];
+    sip_generate_branch(branch, sizeof(branch), param->uid, param->device_ip, (uint32_t)param->cseq_num);
+    snprintf(buf, sizeof(buf), "SIP/2.0/MQTT %s;branch=%s", param->device_ip, branch);
+    CHECK_RET(osip_via_parse(via, buf));
+    osip_list_add(&msg->vias, via, -1);
+
+    // Max-Forwards: 70
+    CHECK_RET(osip_message_set_header(msg, "Max-Forwards", "70"));
+
+    // From: <sip:{uid}@server.lovaiot.com>;tag=<动态生成>
+    CHECK_RET(osip_from_init(&msg->from));
+    char tag[33]; // 16 hex + 16 hex + '\0'，我们只用 16（%08X%08X）
+    char call_id[36] = {0};
+    uint32_t ms = adapter_get_system_ms();
+    sprintf(call_id, "%ld@%s", ms, param->device_ip);  
+    sip_generate_tag(tag, sizeof(tag), param->uid, param->device_ip, call_id, (uint32_t)param->cseq_num);
+    snprintf(buf, sizeof(buf), "<sip:%s@%s>;tag=%s", param->uid, SERVER_HOST, tag);
+    CHECK_RET(osip_from_parse(msg->from, buf));
+
+    // To: <sip:{uid}@server.lovaiot.com>
+    CHECK_RET(osip_to_init(&msg->to));
+    snprintf(buf, sizeof(buf), "<sip:%s@%s>", param->uid, SERVER_HOST);
+    CHECK_RET(osip_to_parse(msg->to, buf));
+
+    // Call-ID: reg-1234567890@lovaiot.com
+    CHECK_RET(osip_call_id_init(&msg->call_id));
+    CHECK_RET(osip_call_id_parse(msg->call_id, call_id));
+
+    // CSeq: 1 REGISTER
+    CHECK_RET(osip_cseq_init(&msg->cseq));
+    snprintf(buf, sizeof(buf), "%d REGISTER", param->cseq_num);
+    CHECK_RET(osip_cseq_parse(msg->cseq, buf));
+
+    // Contact: <sip:{uid}@mqtt:{device-ip}>;expires=3600
+    osip_contact_t *ct = NULL;
+    osip_contact_init(&ct);
+    snprintf(buf, sizeof(buf), "<sip:%s@%s>;expires=%d", param->uid, param->device_ip, param->expires_sec);
+    CHECK_RET(osip_contact_parse(ct, buf));
+    osip_list_add(&msg->contacts, ct, -1);
+
+    // Expires: 3600
+    snprintf(buf, sizeof(buf), "%d", param->expires_sec);
+    CHECK_RET(osip_message_set_header(msg, "Expires", buf));
+
+    // User-Agent: AI-Toy/1.0
+    CHECK_RET(osip_message_set_header(msg, "User-Agent", USER_AGENT));
+
+    // Content-Length: 0
+    CHECK_RET(osip_message_set_content_length(msg, osip_strdup("0")));
+
+    // 序列化为最终字符串
+    CHECK_RET(osip_message_to_str(msg, out_msg, out_len));
+    osip_message_free(msg);
+    return 0;
+
+fail:
+    if (msg) osip_message_free(msg);
+    return -1;
+}
+
+
+static int make_sdp(uplink_sdp_parameter_ptr param, char *dst, size_t dst_sz)
+{
+    if (!dst || dst_sz == 0 || !param || !param->uid || !param->device_ip || !param->codec) return -1;
+
+    uint32_t version = (uint32_t)adapter_get_system_ms();
+    char call_id[36] = {0};
+    sprintf(call_id, "%ld@%s", version, param->device_ip);  
+    int n = snprintf(dst, dst_sz,
+        "v=0\r\n"
+        "o=%s %s %ld IN IP4 %s\r\n"
+        "s=AI-Session\r\n"
+        "c=IN IP4 %s\r\n"
+        "t=0 0\r\n"
+        "m=audio 6000 UDP/AI-AUDIO\r\n"
+        "a=x-transport:udp\r\n"
+        "a=x-codec:%s\r\n"
+        "a=x-sample_rate:%d\r\n"
+        "a=x-channels:%d\r\n"
+        "a=x-frame_duration:%d\r\n"
+        "a=x-support_cbr:%d\r\n"
+        "a=x-support_frame_gap:%d\r\n"
+        "a=x-mcp:%d\r\n",
+        param->uid, call_id, version, param->device_ip, 
+        param->device_ip, 
+        param->codec, 
+        param->sample_rate, 
+        param->channels, 
+        param->frame_duration_ms,
+        param->cbr, 
+        param->frame_gap,
+        param->support_mcp ? 1 : 0
+    );
+    if(param->wake_up_word && param->wake_up_word[0] != '\0'){
+        int m = snprintf(dst + n, (n < (int)dst_sz) ? (dst_sz - n) : 0,
+            "a=x-wake_up_word:%s\r\n", param->wake_up_word
+        );
+        if (m > 0 && (size_t)m < (dst_sz - n)){
+            n += m;
+        }
+    }
+    return (n > 0 && (size_t)n < dst_sz) ? 0 : -1;
+}
+
+int parse_sdp(const char *sdp_buf, downlink_sdp_parameter_ptr param)
+{
+    if (!sdp_buf || !param) return -1;
+
+    sdp_message_t *sdp = NULL;
+    CHECK_RET(sdp_message_init(&sdp));
+
+    CHECK_RET(sdp_message_parse(sdp, sdp_buf));
+    
+    // 连接信息（会话级）
+    const char *ip = sdp_message_c_addr_get(sdp, -1, 0);
+    if (ip && ip[0] != '\0'){
+        strncpy(param->ip, ip, sizeof(param->ip) - 1);
+        param->ip[sizeof(param->ip) - 1] = '\0';
+    }
+
+    // 媒体部分
+    for (int m = 0; ; ++m) {
+        char *media = sdp_message_m_media_get(sdp, m);
+        if (!media) break;
+        const char *port = sdp_message_m_port_get(sdp, m);
+        if (port){
+            param->port = atoi(port);
+        }
+
+        char *x_transport = NULL;
+        char *codec = NULL;
+        char *sample_rate = NULL;
+        char *channels = NULL;
+        char *frame_duration = NULL;
+        char *encryption = NULL;
+        char *key = NULL;
+        char *nonce = NULL;
+        for (int ai = 0; ; ++ai) {
+            char *af = sdp_message_a_att_field_get(sdp, m, ai);
+            if (!af) break;
+
+            char *av = sdp_message_a_att_value_get(sdp, m, ai);
+            if (av) {
+                if (!x_transport && osip_strcasecmp(af, "x-transport") == 0) x_transport = av;
+                else if (!codec && osip_strcasecmp(af, "x-codec") == 0) codec = av;
+                else if (!sample_rate && osip_strcasecmp(af, "x-sample_rate") == 0) sample_rate = av;
+                else if (!channels && osip_strcasecmp(af, "x-channels") == 0) channels = av;
+                else if (!frame_duration && osip_strcasecmp(af, "x-frame_duration") == 0) frame_duration = av;
+                else if (!encryption && osip_strcasecmp(af, "x-encryption") == 0) encryption = av;
+                else if (!key && osip_strcasecmp(af, "x-key") == 0) key = av;
+                else if (!nonce && osip_strcasecmp(af, "x-nonce") == 0) nonce = av;
+            }
+        }
+        if (codec){
+            strncpy(param->codec, codec, sizeof(param->codec) - 1);
+            param->codec[sizeof(param->codec) - 1] = '\0';
+        }
+        if (x_transport){
+            strncpy(param->transport, x_transport, sizeof(param->transport) - 1);
+            param->transport[sizeof(param->transport) - 1] = '\0';
+        }
+        if (sample_rate){
+            param->sample_rate = atoi(sample_rate);
+        }
+        if (channels){
+            param->channels = atoi(channels);
+        }
+        if (frame_duration){
+            param->frame_duration = atoi(frame_duration);
+        }
+        if (encryption){
+            strncpy(param->encryption, encryption, sizeof(param->encryption) - 1);
+            param->encryption[sizeof(param->encryption) - 1] = '\0';
+        }
+        if (key){
+            hex_string_to_array(key, param->aes_key, sizeof(param->aes_key));
+        }
+        if (nonce){
+            hex_string_to_array(nonce, param->nonce, sizeof(param->nonce));
+        }
+        
+        break; // 仅处理第一个媒体
+    }
+
+    sdp_message_free(sdp);
+    return 0;
+
+fail:
+    if (sdp) sdp_message_free(sdp);
+    return -1;    
+}
+
+
+int build_invite(sip_invite_param_ptr param, char **out_msg, size_t *out_len)
+{
+    if (!param || !param->uid || !param->device_ip || !out_msg || !out_len) return -1;
+
+    osip_message_t *msg = NULL;
+    char buf[350];
+
+    CHECK_RET(osip_message_init(&msg));
+
+    // INVITE sip:server.lovaiot.com SIP/2.0
+    osip_message_set_method(msg, osip_strdup("INVITE"));
+    osip_message_set_version(msg, osip_strdup(SIP_VERSION));
+    CHECK_RET(osip_uri_init(&msg->req_uri));
+    snprintf(buf, sizeof(buf), "sip:%s", SERVER_HOST);
+    CHECK_RET(osip_uri_parse(msg->req_uri, buf));
+
+    // Via: SIP/2.0/MQTT {device-ip};branch=z9hG4bK-123456
+    // 说明：oSIP 对协议标记（MQTT）不做强校验，作为 token 接受
+    osip_via_t *via = NULL;
+    osip_via_init(&via);
+
+    char branch[32];
+    sip_generate_branch(branch, sizeof(branch), param->uid, param->device_ip, (uint32_t)param->cseq_num);
+    snprintf(buf, sizeof(buf), "SIP/2.0/MQTT %s;branch=%s", param->device_ip, branch);
+    CHECK_RET(osip_via_parse(via, buf));
+    osip_list_add(&msg->vias, via, -1);
+
+    // Max-Forwards: 70
+    CHECK_RET(osip_message_set_header(msg, "Max-Forwards", "70"));
+
+    uint32_t ms = adapter_get_system_ms();
+    char call_id[36] = {0};
+    sprintf(call_id, "%ld@%s", ms, param->device_ip);    
+
+    // From: <sip:{uid}@server.lovaiot.com>;tag=<动态生成>
+    CHECK_RET(osip_from_init(&msg->from));
+    char tag[33]; // 16 hex + 16 hex + '\0'，我们只用 16（%08X%08X）
+    sip_generate_tag(tag, sizeof(tag), param->uid, param->device_ip, call_id, (uint32_t)param->cseq_num);
+    snprintf(buf, sizeof(buf), "<sip:%s@%s>;tag=%s", param->uid, SERVER_HOST, tag);
+    CHECK_RET(osip_from_parse(msg->from, buf));
+
+    // To: <sip:server@server.lovaiot.com>
+    CHECK_RET(osip_to_init(&msg->to));
+    snprintf(buf, sizeof(buf), "<sip:server@%s>", SERVER_HOST);
+    CHECK_RET(osip_to_parse(msg->to, buf));
+
+    // Call-ID: reg-1234567890@lovaiot.com   
+    CHECK_RET(osip_call_id_init(&msg->call_id));
+    CHECK_RET(osip_call_id_parse(msg->call_id, call_id));
+
+    // CSeq: 1 INVITE
+    CHECK_RET(osip_cseq_init(&msg->cseq));
+    snprintf(buf, sizeof(buf), "%u INVITE", param->cseq_num);
+    CHECK_RET(osip_cseq_parse(msg->cseq, buf));
+
+    // Contact: <sip:{uid}@{device-ip}>
+    osip_contact_t *ct = NULL;
+    osip_contact_init(&ct);
+    snprintf(buf, sizeof(buf), "<sip:%s@%s>", param->uid, param->device_ip);
+    CHECK_RET(osip_contact_parse(ct, buf));
+    osip_list_add(&msg->contacts, ct, -1);
+
+    // Content-Type: application/sdp
+    CHECK_RET(osip_message_set_header(msg, "Content-Type", "application/sdp"));
+
+    // Body：SDP（如果提供则设置）
+    if (param->sdp != NULL){
+        make_sdp(param->sdp, buf, sizeof(buf));
+        size_t sdp_len = strlen(buf);
+        CHECK_RET(osip_message_set_body(msg, buf, sdp_len));
+    }
+
+    // Content-Length：与实际 body 长度保持一致（无 body 时为 0）
+    {
+        int body_len = 0;
+        if (!osip_list_eol(&msg->bodies, 0)) {
+            osip_body_t *body = (osip_body_t *)osip_list_get(&msg->bodies, 0);
+            if (body && body->length > 0) {
+                body_len = (int)body->length;
+            }
+        }
+        char clen[32];
+        snprintf(clen, sizeof(clen), "%d", body_len);
+        CHECK_RET(osip_message_set_content_length(msg, osip_strdup(clen)));
+    }
+
+    // 序列化为最终字符串
+    CHECK_RET(osip_message_to_str(msg, out_msg, out_len));
+    osip_message_free(msg);
+    return 0;
+
+fail:
+    if (msg) osip_message_free(msg);
+    return -1;
+}
+
+/** 
+* 组装一个 SIP 200 OK 响应报文并输出为字符串。
+* 参数：
+*   status_code:     响应码（例如 200）
+*   reason_phrase:   响应短语（例如 "OK"）
+*   via_header:      Via 头部字符串（例如 "SIP/2.0/UDP 192.0.2.4;branch=z9hG4bK776asdhds"）
+*   from_header:     From 头部字符串（例如 "Alice <sip:alice@example.com>;tag=1928301774"）
+*   to_header:       To 头部字符串（例如 "Bob <sip:bob@example.com>"）
+*   to_tag:          To 标签（例如 "xyz123"，如果为 NULL 则不添加）
+*   call_id:         Call-ID（例如 "a84b4c76e66710"）
+*   cseq_header:     CSeq 头部字符串（例如 "314159 INVITE"）
+*   contact_header:  Contact 头部字符串（例如 "<sip:alice@pc33.example.com>"，可为 NULL）
+*   content_type:    Content-Type（例如 "application/sdp"，可为 NULL）
+*   message_body:    消息体内容（可为 NULL）
+*   body_length:     消息体长度
+* 输出：
+*   out_msg:         指向已分配的完整响应报文字符串（用 osip_free 释放）
+*   out_len:         报文长度
+* 返回：0 成功，非0失败
+**/
+static int build_response(int status_code,
+                   const char *reason_phrase,
+                   const char *via_header,
+                   const char *from_header,
+                   const char *to_header,
+                   const char *to_tag,
+                   const char *call_id,
+                   const char *cseq_header,
+                   const char *contact_header,
+                   const char *content_type,
+                   const char *message_body,
+                   size_t body_length,
+                   char **out_msg,
+                   size_t *out_len)
+{
+    if (!reason_phrase || !via_header || !from_header || !to_header || 
+        !call_id || !cseq_header || !out_msg || !out_len) {
+        return -1;
+    }
+
+    osip_message_t *resp = NULL;
+    char buf[512];
+
+    CHECK_RET(osip_message_init(&resp));
+
+    // 状态行：SIP/2.0 200 OK
+    osip_message_set_version(resp, osip_strdup(SIP_VERSION));
+    osip_message_set_status_code(resp, status_code);
+    osip_message_set_reason_phrase(resp, osip_strdup(reason_phrase));
+
+    // Via 头部
+    osip_via_t *via = NULL;
+    osip_via_init(&via);
+    CHECK_RET(osip_via_parse(via, via_header));
+    osip_list_add(&resp->vias, via, -1);
+
+    // From 头部
+    CHECK_RET(osip_from_init(&resp->from));
+    CHECK_RET(osip_from_parse(resp->from, from_header));
+
+    // To 头部（可能需要添加 tag）
+    CHECK_RET(osip_to_init(&resp->to));
+    if (to_tag) {
+        // 检查 to_header 是否已经包含 tag
+        if (strstr(to_header, ";tag=")) {
+            // 已经有 tag，直接使用
+            CHECK_RET(osip_to_parse(resp->to, to_header));
+        } else {
+            // 没有 tag，添加 tag
+            snprintf(buf, sizeof(buf), "%s;tag=%s", to_header, to_tag);
+            CHECK_RET(osip_to_parse(resp->to, buf));
+        }
+    } else {
+        CHECK_RET(osip_to_parse(resp->to, to_header));
+    }
+
+    // Call-ID
+    CHECK_RET(osip_call_id_init(&resp->call_id));
+    CHECK_RET(osip_call_id_parse(resp->call_id, call_id));
+
+    // CSeq
+    CHECK_RET(osip_cseq_init(&resp->cseq));
+    CHECK_RET(osip_cseq_parse(resp->cseq, cseq_header));
+
+    // Contact（可选）
+    if (contact_header) {
+        osip_contact_t *ct = NULL;
+        osip_contact_init(&ct);
+        CHECK_RET(osip_contact_parse(ct, contact_header));
+        osip_list_add(&resp->contacts, ct, -1);
+    }
+
+    // Content-Type（可选）
+    if (content_type) {
+        CHECK_RET(osip_message_set_header(resp, "Content-Type", content_type));
+    }
+
+    // 消息体和 Content-Length
+    if (message_body && body_length > 0) {
+        CHECK_RET(osip_message_set_body(resp, message_body, body_length));
+        snprintf(buf, sizeof(buf), "%u", (unsigned)body_length);
+        CHECK_RET(osip_message_set_content_length(resp, osip_strdup(buf)));
+    } else {
+        CHECK_RET(osip_message_set_content_length(resp, osip_strdup("0")));
+    }
+
+    // 序列化为最终字符串
+    CHECK_RET(osip_message_to_str(resp, out_msg, out_len));
+    osip_message_free(resp);
+    return 0;
+
+fail:
+    if (resp) osip_message_free(resp);
+    return -1;
+}
+
+// 便捷函数：构建简单的 200 OK 响应（无消息体）
+int build_200_ok_response(received_sip_message_ptr request, char **out_msg, size_t *out_len)
+{
+    if (!request || !out_msg || !out_len){
+        return -1;
+    }
+
+    return build_response(200, "OK", request->via_header, request->from_header, request->to_header, NULL,
+                         request->call_id_header, request->cseq_header, request->contact_header, NULL, NULL, 0,
+                         out_msg, out_len); 
+    
+}
+
+
+
+int build_ack(received_sip_message_ptr response, const char *uid, const char *device_ip, int cseq_num, char **out_msg, size_t *out_len)
+{
+    if (!response || !uid || !device_ip || !out_msg || !out_len) {
+        return -1;
+    }
+
+    osip_message_t *ack = NULL;
+    char buf[256];
+
+    CHECK_RET(osip_message_init(&ack));
+
+    // 请求行：ACK {request_uri} SIP/2.0
+    osip_message_set_method(ack, osip_strdup("ACK"));
+    osip_message_set_version(ack, osip_strdup(SIP_VERSION));
+    
+    char req_uri_str[128] = {0};
+    snprintf(req_uri_str, sizeof(req_uri_str), "sip:server@%s", SERVER_HOST);
+
+    CHECK_RET(osip_uri_init(&ack->req_uri));
+    CHECK_RET(osip_uri_parse(ack->req_uri, req_uri_str));
+
+    // 2) Via 头（为新的 ACK 事务生成 branch）
+    //    协议承载在 MQTT 上，沿用栈中示例格式
+    char via_hdr[128] = {0};
+    snprintf(via_hdr, sizeof(via_hdr), "SIP/2.0/MQTT %s;branch=z9hG4bK-ack%u",
+             device_ip, (unsigned)(adapter_get_system_ms() & 0xFFFF));
+
+    osip_via_t *via = NULL;
+    osip_via_init(&via);
+    CHECK_RET(osip_via_parse(via, via_hdr));
+    osip_list_add(&ack->vias, via, -1);
+
+    // Max-Forwards: 70
+    CHECK_RET(osip_message_set_header(ack, "Max-Forwards", "70"));
+
+    // From: 复制原来的 From 头部
+    CHECK_RET(osip_from_init(&ack->from));
+    CHECK_RET(osip_from_parse(ack->from, response->from_header));
+
+    // To: 复制原来的 To 头部
+    CHECK_RET(osip_to_init(&ack->to));
+    CHECK_RET(osip_to_parse(ack->to, response->to_header));
+
+    // Call-ID: 复制原来的 Call-ID
+    CHECK_RET(osip_call_id_init(&ack->call_id));
+    CHECK_RET(osip_call_id_parse(ack->call_id, response->call_id_header));
+
+    // CSeq: 使用原来的序列号，但方法改为 ACK
+    CHECK_RET(osip_cseq_init(&ack->cseq));
+    snprintf(buf, sizeof(buf), "%d ACK", cseq_num);
+    CHECK_RET(osip_cseq_parse(ack->cseq, buf));
+
+    // Contact: <sip:{uid}@{device-ip}>
+    osip_contact_t *ct = NULL;
+    osip_contact_init(&ct);
+    snprintf(buf, sizeof(buf), "<sip:%s@%s>", uid, device_ip);
+    CHECK_RET(osip_contact_parse(ct, buf));
+    osip_list_add(&ack->contacts, ct, -1);
+
+    // User-Agent: AI-Toy/1.0
+    CHECK_RET(osip_message_set_header(ack, "User-Agent", USER_AGENT));
+
+    // Content-Length: 0
+    CHECK_RET(osip_message_set_content_length(ack, osip_strdup("0")));
+
+    // 序列化为最终字符串
+    CHECK_RET(osip_message_to_str(ack, out_msg, out_len));
+    osip_message_free(ack);
+    return 0;
+
+fail:
+    if (ack) osip_message_free(ack);
+    return -1;
+}
+
+
+// 参数：
+//   uid:           例如 "device-uid-123"
+//   device_ip:     例如 "192.168.1.100"
+//   cseq_num:      例如 6
+// 输出：
+//   out_msg:       指向已分配的完整报文字符串（用 osip_free 释放）
+//   out_len:       报文长度
+// 返回：0 成功，非0失败
+int build_listen_info(
+               received_sip_message_ptr response,
+               const char *uid,
+               const char *device_ip,
+               int cseq_num,
+               info_param_ptr info,
+               char **out_msg,
+               size_t *out_len)
+{
+    if (!response || !uid || !device_ip || !info || !out_msg || !out_len) {
+        return -1;
+    }
+
+    osip_message_t *msg = NULL;
+    char buf[512];
+
+    CHECK_RET(osip_message_init(&msg));
+
+    // 请求行：INFO sip:server@server.lovaiot.com SIP/2.0
+    osip_message_set_method(msg, osip_strdup("INFO"));
+    osip_message_set_version(msg, osip_strdup(SIP_VERSION));
+    CHECK_RET(osip_uri_init(&msg->req_uri));
+    snprintf(buf, sizeof(buf), "sip:server@%s", SERVER_HOST);
+    CHECK_RET(osip_uri_parse(msg->req_uri, buf));
+
+    // Via: SIP/2.0/UDP {device-ip};branch=z9hG4bK-info001
+    osip_via_t *via = NULL;
+    osip_via_init(&via);
+    char branch[32];
+    sip_generate_branch(branch, sizeof(branch), uid, device_ip, (uint32_t)cseq_num);
+    snprintf(buf, sizeof(buf), "SIP/2.0/UDP %s;branch=%s", device_ip, branch);
+    CHECK_RET(osip_via_parse(via, buf));
+    osip_list_add(&msg->vias, via, -1);
+
+    // Max-Forwards: 70
+    CHECK_RET(osip_message_set_header(msg, "Max-Forwards", "70"));
+
+    // From: <sip:{uid}@server.lovaiot.com>;tag=abc123
+    CHECK_RET(osip_from_init(&msg->from));
+    CHECK_RET(osip_from_parse(msg->from, response->from_header));
+
+    // To: <sip:server@server.lovaiot.com>;tag=server999
+    CHECK_RET(osip_to_init(&msg->to));
+    CHECK_RET(osip_to_parse(msg->to, response->to_header));
+
+    // Call-ID: call-987654323@{device-ip}
+    CHECK_RET(osip_call_id_init(&msg->call_id));
+    CHECK_RET(osip_call_id_parse(msg->call_id, response->call_id_header));
+
+    // CSeq: 6 INFO
+    CHECK_RET(osip_cseq_init(&msg->cseq));
+    snprintf(buf, sizeof(buf), "%d INFO", cseq_num);
+    CHECK_RET(osip_cseq_parse(msg->cseq, buf));
+
+    // User-Agent: TUOYUN-AI-TOY/1.0
+    CHECK_RET(osip_message_set_header(msg, "User-Agent", USER_AGENT));
+
+    // Content-Type: application/json
+    CHECK_RET(osip_message_set_header(msg, "Content-Type", "application/json"));
+
+    // Body: JSON 内容
+    void *root = adapter_create_json_object();
+    adapter_put_json_string_value(root, "event", info->event);
+
+    if (strlen(info->command) > 0){
+        adapter_put_json_string_value(root, "command", info->command);
+    }
+    if (strlen(info->mode) > 0){
+        adapter_put_json_string_value(root, "mode", info->mode);
+    }
+    
+    char* json_string = adapter_serialize_json_to_string(root);
+    if (!json_string) {
+        adapter_delete_json_object(root);
+        goto fail;
+    }
+
+    int json_len = (int)strlen(json_string);
+    CHECK_RET(osip_message_set_body(msg, json_string, (size_t)json_len));
+
+    // Content-Length: 自动计算设置
+    snprintf(buf, sizeof(buf), "%d", json_len);
+    CHECK_RET(osip_message_set_content_length(msg, buf));
+
+    // 序列化为最终字符串
+    CHECK_RET(osip_message_to_str(msg, out_msg, out_len));
+    osip_message_free(msg);
+    adapter_delete_json_object(root);
+    return 0;
+
+fail:
+    if (msg) osip_message_free(msg);
+    return -1;
+}
+
+
+int build_bye(received_sip_message_ptr invite, char* uid, char* device_ip, int cseq_num, char** out_msg, size_t* out_len){
+
+    if (!invite || !uid || !device_ip || !out_msg || !out_len) return -1;
+
+    int ret = -1;
+    osip_message_t *bye = NULL;
+
+    char req_uri_str[128] = {0};
+    snprintf(req_uri_str, sizeof(req_uri_str), "sip:server@%s", SERVER_HOST);
+
+    // 开始组装 BYE
+    CHECK_RET(osip_message_init(&bye));
+
+    // 请求行：BYE {request-uri} SIP/2.0
+    osip_message_set_method(bye, osip_strdup("BYE"));
+    osip_message_set_version(bye, osip_strdup(SIP_VERSION));
+    CHECK_RET(osip_uri_init(&bye->req_uri));
+    CHECK_RET(osip_uri_parse(bye->req_uri, req_uri_str));
+
+    // Via：生成新的 branch；承载保持 MQTT（若有 device_ip 则带上）
+    {
+        char via_buf[192];
+        char branch[32];
+        // 分支基于 uid/device_ip/cseq 生成；缺省时传 NULL/0 也可
+        sip_generate_branch(branch, sizeof(branch),
+                            uid ? uid : "uid",
+                            device_ip ? device_ip : "0.0.0.0",
+                            (uint32_t)invite->cseq_num);
+
+        if (device_ip && device_ip[0] != '\0') {
+            snprintf(via_buf, sizeof(via_buf), "SIP/2.0/MQTT %s;branch=%s", device_ip, branch);
+        } else {
+            // 没设备 IP 也构造最小 Via
+            snprintf(via_buf, sizeof(via_buf), "SIP/2.0/MQTT;branch=%s", branch);
+        }
+
+        osip_via_t *via = NULL;
+        osip_via_init(&via);
+        CHECK_RET(osip_via_parse(via, via_buf));
+        osip_list_add(&bye->vias, via, -1);
+    }
+
+    // Max-Forwards
+    CHECK_RET(osip_message_set_header(bye, "Max-Forwards", "70"));
+
+    // From / To：直接沿用 INVITE（保留已有 tag；若 To 无 tag，说明对端未应答 2xx，依旧发送 BYE 也可）
+    CHECK_RET(osip_from_init(&bye->from));
+    CHECK_RET(osip_from_parse(bye->from, invite->from_header));
+    CHECK_RET(osip_to_init(&bye->to));
+    CHECK_RET(osip_to_parse(bye->to, invite->to_header));
+
+    // Call-ID
+    CHECK_RET(osip_call_id_init(&bye->call_id));
+    CHECK_RET(osip_call_id_parse(bye->call_id, invite->call_id_header));
+
+    // CSeq: <num> BYE
+    {
+        char cseq_buf[32];
+        CHECK_RET(osip_cseq_init(&bye->cseq));
+        snprintf(cseq_buf, sizeof(cseq_buf), "%u BYE", cseq_num);
+        CHECK_RET(osip_cseq_parse(bye->cseq, cseq_buf));
+    }
+
+    // Contact（可选）：沿用本端 INVITE 的 Contact
+    osip_contact_t *ct = NULL;
+    osip_contact_init(&ct);
+    int pr = osip_contact_parse(ct, invite->contact_header);
+    if (pr == OSIP_SUCCESS) {
+        osip_list_add(&bye->contacts, ct, -1);
+    } else {
+        osip_contact_free(ct);
+    }
+
+    // User-Agent
+    CHECK_RET(osip_message_set_header(bye, "User-Agent", USER_AGENT));
+
+    // Content-Length: 0（BYE 无消息体）
+    CHECK_RET(osip_message_set_content_length(bye, osip_strdup("0")));
+
+    // 序列化
+    CHECK_RET(osip_message_to_str(bye, out_msg, out_len));
+    osip_message_free(bye);
+    bye = NULL;
+    ret = 0;
+
+cleanup:
+    if (bye) osip_message_free(bye);
+    return ret;
+
+fail:
+    ret = -1;
+    goto cleanup;
+}
+
+
+// 收到 SIP 消息时的第一步处理函数
+// 参数：
+//   raw_msg:     原始消息缓冲区
+//   msg_len:     消息长度
+//   msg_info:    输出解析后的消息信息（可为 NULL）
+// 返回：解析结果
+int sip_parse_incoming_message(const char *raw_msg,  size_t msg_len, received_sip_message_ptr *msg_info)
+{
+    if (!raw_msg || msg_len == 0 || !msg_info) {
+        return -1;
+    }
+
+    // 初始化 osip 消息结构
+    osip_message_t* sip = NULL;
+    if (0 != osip_message_init(&sip)) {
+        return -1;
+    }
+
+    // 解析 SIP 消息
+    int rc = osip_message_parse(sip, raw_msg, msg_len);
+    if (rc != 0) {
+        goto cleanup;
+    }
+
+    //log_info("SIP message parsed successfully\n");
+
+    // 基本验证
+    if (!sip->call_id || !sip->call_id->number) {
+        goto cleanup;
+    }
+
+    if (!sip->cseq || !sip->cseq->number || !sip->cseq->method) {
+        goto cleanup;
+    }
+
+    if (!sip->from || !sip->to) {
+        goto cleanup;
+    }
+
+    size_t body_length = 0;
+    char *body_content = NULL;
+
+    // 消息体
+    osip_body_t *body = NULL;
+    if (!osip_list_eol(&sip->bodies, 0)) {
+        body = (osip_body_t *)osip_list_get(&sip->bodies, 0);
+        if (body && body->body) {
+            osip_body_to_str(body, &body_content, &body_length);
+           
+        }
+    }
+
+    if (body_content && body_length > 0) {
+        /**
+         * 长度预留一个'\0'
+         */
+        *msg_info = malloc(body_length + 1 + sizeof(received_sip_message_t)); 
+        if (!*msg_info) {
+            goto cleanup;
+        }
+        memset(*msg_info, 0, sizeof(received_sip_message_t) + body_length + 1);
+        
+        (*msg_info)->body_length = body_length;
+        strncpy((*msg_info)->message_body, body_content, body_length);
+        osip_free(body_content);
+    
+    } else {
+        *msg_info = malloc(sizeof(received_sip_message_t));
+        if (!*msg_info) {
+            goto cleanup;
+        }
+        memset(*msg_info, 0, sizeof(received_sip_message_t));
+    }
+    received_sip_message_ptr message = *msg_info;
+    strncpy(message->method, sip->cseq->method, sizeof(message->method) - 1);
+    message->status_code = sip->status_code;
+    strncpy(message->reason_phrase,  sip->reason_phrase ? sip->reason_phrase : "", sizeof(message->reason_phrase) - 1);  
+    
+    
+    // From 信息
+    if (sip->from) {
+        char *from_str = NULL;
+        
+        //strncpy(message->from_header, "<sip:5442993809231380480@server.lovaiot.com>;tag=srvtg1763532272424", sizeof(message->from_header) - 1);
+        if (OSIP_SUCCESS != osip_from_to_str(sip->from, &from_str) || !from_str) {
+            goto cleanup;
+        }
+        strncpy(message->from_header, from_str, sizeof(message->from_header) - 1);
+        osip_free(from_str);
+    }
+
+    if (sip->to){
+        char *to_str = NULL;
+        if (OSIP_SUCCESS != osip_to_to_str(sip->to, &to_str)){
+            goto cleanup;
+        }
+        strncpy(message->to_header, to_str, sizeof(message->to_header) - 1);
+        osip_free(to_str);
+    }
+
+    if (!osip_list_eol(&sip->vias, 0)) {
+        osip_via_t *via = (osip_via_t *)osip_list_get(&sip->vias, 0);
+        char *via_header = NULL;
+        if (OSIP_SUCCESS != osip_via_to_str(via, &via_header)) {
+            goto cleanup;
+        }
+        strncpy(message->via_header, via_header, sizeof(message->via_header) - 1);
+        osip_free(via_header);
+    }
+    
+    if (sip->call_id){
+        char* call_id = NULL;
+        if (OSIP_SUCCESS != osip_call_id_to_str(sip->call_id, &call_id)){
+            goto cleanup;
+        }
+        strncpy(message->call_id_header, call_id, sizeof(message->call_id_header) - 1);
+        osip_free(call_id);
+
+        strncpy(message->call_id, sip->call_id->number, sizeof(message->call_id) - 1);        
+    }
+
+    if (sip->cseq){
+        char* cseq_header = NULL;
+        if (OSIP_SUCCESS != osip_cseq_to_str(sip->cseq, &cseq_header)){
+            goto cleanup;
+        }
+        strncpy(message->cseq_header, cseq_header, sizeof(message->cseq_header) - 1);
+        osip_free(cseq_header);
+
+        safe_str_to_int(sip->cseq->number, &message->cseq_num);
+    }
+
+    if (!osip_list_eol(&sip->contacts, 0)) {
+        osip_contact_t *ct = (osip_contact_t *)osip_list_get(&sip->contacts, 0);
+        if (ct) {
+            char *contact_header = NULL;
+            osip_contact_to_str(ct, &contact_header);
+            strncpy(message->contact_header, contact_header, sizeof(message->contact_header) - 1);
+            osip_free(contact_header);
+        }
+    }
+
+    osip_content_type_t *ct = osip_message_get_content_type(sip);
+    if (ct && ct->type) {
+        strncpy(message->content_type, ct->type, sizeof(message->content_type) - 1);
+    }
+
+    // 获取名为 "x-reason-code" 的头部，pos=0 表示获取第一个匹配项
+    message->x_reason_code = 0; // 或其他默认值
+    osip_header_t *reason_header = NULL;
+    int ret = osip_message_header_get_byname(sip, "x-reason-code", 0, &reason_header);
+    
+    if (ret == 0 && reason_header != NULL) {
+        if (reason_header->hvalue != NULL) {            
+            // 如果需要转为整数
+            message->x_reason_code = atoi(reason_header->hvalue);
+        }
+    } 
+    
+    return 0;
+
+cleanup:
+    if (sip) {
+        osip_message_free(sip);
+    }
+    if (*msg_info) {
+        free(*msg_info);
+        *msg_info = NULL;
+    }
+    return -1;
+}
+
+void init_sip(void) {
+    parser_init();
+}
+
+
+int is_response_message(received_sip_message_ptr msg){
+    if (!msg) return 0;
+    return (msg->status_code != 0);
+}
+
+int is_response_ok(received_sip_message_ptr msg){
+    if (!msg) return 0;
+    return (msg->status_code == 200);
+}

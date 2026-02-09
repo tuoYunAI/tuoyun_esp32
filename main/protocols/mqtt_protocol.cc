@@ -20,8 +20,11 @@ MqttProtocol::MqttProtocol() {
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateIdle) {
                 ESP_LOGI(TAG, "Reconnecting to MQTT server");
-                app.Schedule([protocol]() {
-                    protocol->StartMqttClient(false);
+                auto alive = protocol->alive_;  // Capture alive flag
+                app.Schedule([protocol, alive]() {
+                    if (*alive) {
+                        protocol->StartMqttClient(false);
+                    }
                 });
             }
         },
@@ -32,6 +35,10 @@ MqttProtocol::MqttProtocol() {
 
 MqttProtocol::~MqttProtocol() {
     ESP_LOGI(TAG, "MqttProtocol deinit");
+    
+    // Mark as dead first to prevent any pending scheduled tasks from executing
+    *alive_ = false;
+    
     if (reconnect_timer_ != nullptr) {
         esp_timer_stop(reconnect_timer_);
         esp_timer_delete(reconnect_timer_);
@@ -45,8 +52,8 @@ MqttProtocol::~MqttProtocol() {
     }
 }
 
-bool MqttProtocol::Start() {
-    return StartMqttClient(false);
+bool MqttProtocol::Start(bool report_error) {
+    return StartMqttClient(report_error);
 }
 
 bool MqttProtocol::StartMqttClient(bool report_error) {
@@ -110,8 +117,11 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
             auto session_id = cJSON_GetObjectItem(root, "session_id");
             ESP_LOGI(TAG, "Received goodbye message, session_id: %s", session_id ? session_id->valuestring : "null");
             if (session_id == nullptr || session_id_ == session_id->valuestring) {
-                Application::GetInstance().Schedule([this]() {
-                    CloseAudioChannel();
+                auto alive = alive_;  // Capture alive flag
+                Application::GetInstance().Schedule([this, alive]() {
+                    if (*alive) {
+                        CloseAudioChannel();
+                    }
                 });
             }
         } else if (strcmp(type->valuestring, "alert") == 0) {
@@ -194,27 +204,26 @@ bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     return udp_->Send(encrypted) > 0;
 }
 
-void MqttProtocol::CloseAudioChannel() {
+void MqttProtocol::CloseAudioChannel(bool notify_server) {
     {
         std::lock_guard<std::mutex> lock(channel_mutex_);
         udp_.reset();
     }
-
-    std::string message = "{";
-    message += "\"session_id\":\"" + session_id_ + "\",";
-    message += "\"type\":\"goodbye\"";
-    message += "}";
-    SendText(message);
+    
+    if (notify_server){
+        ESP_LOGI(TAG, "Sending finish call to server");
+        SendFinishCall();
+    }
 
     if (on_audio_channel_closed_ != nullptr) {
         on_audio_channel_closed_();
     }
 }
 
-bool MqttProtocol::OpenAudioChannel() {
+bool MqttProtocol::OpenAudioChannel(const std::string& wakeWord) {
     if (mqtt_ == nullptr || !mqtt_->IsConnected()) {
         ESP_LOGI(TAG, "MQTT is not connected, try to connect now");
-        if (!StartMqttClient(true)) {
+        if (!Start(true)) {
             return false;
         }
     }
@@ -224,8 +233,7 @@ bool MqttProtocol::OpenAudioChannel() {
 
     xEventGroupClearBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT|MQTT_PROTOCOL_SERVER_ALERT_EVENT);
 
-    auto message = GetHelloMessage();
-    if (!SendText(message)) {
+    if (!SendInitCall(wakeWord)) {
         return false;
     }
 
@@ -283,7 +291,7 @@ bool MqttProtocol::OpenAudioChannel() {
             ESP_LOGE(TAG, "Failed to decrypt audio data, ret: %d", ret);
             return;
         }
-/*
+        /*
         ESP_LOGI(TAG, "start timestamp: %ld, sequence: %ld, size: %d\n", timestamp, sequence, decrypted_size);
         for(int i= 0; i < decrypted_size; i++){
             printf("%02x ", packet->payload[i]);
@@ -400,4 +408,26 @@ std::string MqttProtocol::DecodeHexString(const std::string& hex_string) {
 
 bool MqttProtocol::IsAudioChannelOpened() const {
     return udp_ != nullptr && !error_occurred_ && !IsTimeout();
+}
+
+Mqtt& MqttProtocol::getMqtt(){
+    return *mqtt_.get();
+}
+
+bool MqttProtocol::SendInitCall(const std::string& wakeWord){
+    ESP_LOGI(TAG, "@@@@@@Sending init call on Hello Message@@@@@@");
+    auto message = GetHelloMessage();
+    if (!SendText(message)) {
+        return false;
+    }
+    return true;
+}
+
+bool MqttProtocol::SendFinishCall(){
+
+    std::string message = "{";
+    message += "\"session_id\":\"" + session_id_ + "\",";
+    message += "\"type\":\"goodbye\"";
+    message += "}";
+    return SendText(message);
 }

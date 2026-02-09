@@ -24,25 +24,55 @@ set(SOURCES "audio/audio_codec.cc"
             "display/lvgl_display/gif/lvgl_gif.cc"
             "display/lvgl_display/gif/gifdec.c"
             "display/lvgl_display/jpg/image_to_jpeg.cpp"
+            "display/lvgl_display/jpg/jpeg_to_image.c"
             "protocols/protocol.cc"
             "protocols/mqtt_protocol.cc"
             "protocols/websocket_protocol.cc"
+            "protocols/sip_mqtt_protocol.cc"
+            "protocols/sip/adapter.cc"
+            "protocols/sip/osip_adapter.c"
+            "protocols/sip/session.c"
             "mcp_server.cc"
             "system_info.cc"
             "application.cc"
             "ota.cc"
             "settings.cc"
-            "device_state_event.cc"
+            "device_state_machine.cc"
             "assets.cc"
             "main.cc"
             )
 
 set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "protocols")
 
+# Add osip library files
+file(GLOB OSIP_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/protocols/sip/osip/src/osipparser2/*.c)
+list(APPEND SOURCES ${OSIP_SOURCES})
+list(APPEND INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/protocols/sip)
+list(APPEND INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/protocols/sip/osip/include)
+
 # Add board common files
-file(GLOB BOARD_COMMON_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/boards/common/*.cc)
-list(APPEND SOURCES ${BOARD_COMMON_SOURCES})
+list(APPEND SOURCES
+    "boards/common/board.cc"
+    "boards/common/wifi_board.cc"
+    "boards/common/wifi_configuration_bluetooth.cc"
+    "boards/common/ml307_board.cc"
+    "boards/common/nt26_board.cc"
+    "boards/common/dual_network_board.cc"
+    "boards/common/adc_battery_monitor.cc"
+    "boards/common/afsk_demod.cc"
+    "boards/common/axp2101.cc"
+    "boards/common/backlight.cc"
+    "boards/common/button.cc"
+    "boards/common/i2c_device.cc"
+    "boards/common/knob.cc"
+    "boards/common/power_save_timer.cc"
+    "boards/common/press_to_talk_mcp_tool.cc"
+    "boards/common/sleep_timer.cc"
+    "boards/common/sy6970.cc"
+    "boards/common/system_reset.cc"
+)
 list(APPEND INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/boards/common)
+
 
 idf_build_get_property(build_components BUILD_COMPONENTS)
 # Function to find component dynamically by pattern
@@ -61,6 +91,8 @@ endfunction()
 set(BUILTIN_TEXT_FONT font_puhui_14_1)
 set(BUILTIN_ICON_FONT font_awesome_14_1)
 
+set(EMOTE_RESOLUTION "320_240")
+
 # Add board files according to BOARD_TYPE
 # Set default assets if the board uses partition table V2
 if(CONFIG_BOARD_TYPE_BREAD_COMPACT_WIFI)
@@ -69,6 +101,10 @@ if(CONFIG_BOARD_TYPE_BREAD_COMPACT_WIFI)
     set(BUILTIN_ICON_FONT font_awesome_14_1)
 elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_ML307)
     set(BOARD_TYPE "bread-compact-ml307")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_14_1)
+    set(BUILTIN_ICON_FONT font_awesome_14_1)
+elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_NT26)
+    set(BOARD_TYPE "bread-compact-nt26")
     set(BUILTIN_TEXT_FONT font_puhui_basic_14_1)
     set(BUILTIN_ICON_FONT font_awesome_14_1)
 elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_ESP32)
@@ -89,11 +125,13 @@ elseif(CONFIG_BOARD_TYPE_ESP_BOX_3)
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+    set(EMOTE_RESOLUTION "320_240")
 elseif(CONFIG_BOARD_TYPE_ESP_BOX)
     set(BOARD_TYPE "esp-box")
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+    set(EMOTE_RESOLUTION "320_240")
 elseif(CONFIG_BOARD_TYPE_ESP_BOX_LITE)
     set(BOARD_TYPE "esp-box-lite")
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
@@ -193,13 +231,20 @@ elseif(CONFIG_BOARD_TYPE_ESP_KORVO2_V3)
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+elseif(CONFIG_BOARD_TYPE_ESP_KORVO2_V3_RNDIS)
+    set(BOARD_TYPE "esp32s3-korvo2-v3-rndis")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
+    set(BUILTIN_ICON_FONT font_awesome_20_4)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_64)
 elseif(CONFIG_BOARD_TYPE_ESP_SPARKBOT)
     set(BOARD_TYPE "esp-sparkbot")
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
 elseif(CONFIG_BOARD_TYPE_ESP_SPOT_S3)
-    set(BOARD_TYPE "esp-spot-s3")
+    set(BOARD_TYPE "esp-spot")
+elseif(CONFIG_BOARD_TYPE_ESP_SPOT_C5)
+    set(BOARD_TYPE "esp-spot")
 elseif(CONFIG_BOARD_TYPE_ESP_HI)
     set(BOARD_TYPE "esp-hi")
     # Set ESP_HI emoji directory for DEFAULT_ASSETS_EXTRA_FILES
@@ -209,6 +254,13 @@ elseif(CONFIG_BOARD_TYPE_ECHOEAR)
     set(BUILTIN_TEXT_FONT font_puhui_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+    set(EMOTE_RESOLUTION "360_360")
+    # set(EMOTE_EXTERNAL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/boards/echoear/assets")
+elseif(CONFIG_BOARD_TYPE_ESP_SENSAIRSHUTTLE)
+    set(BOARD_TYPE "esp-sensairshuttle")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_16_4)
+    set(BUILTIN_ICON_FONT font_awesome_16_4)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_32)
 elseif(CONFIG_BOARD_TYPE_WAVESHARE_S3_AUDIO_BOARD)
     set(BOARD_TYPE "waveshare-s3-audio-board")
     set(BUILTIN_TEXT_FONT font_puhui_basic_16_4)
@@ -219,8 +271,18 @@ elseif(CONFIG_BOARD_TYPE_WAVESHARE_S3_TOUCH_AMOLED_1_8)
     set(BUILTIN_TEXT_FONT font_puhui_basic_30_4)
     set(BUILTIN_ICON_FONT font_awesome_30_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+elseif(CONFIG_BOARD_TYPE_WAVESHARE_C6_TOUCH_AMOLED_1_8)
+    set(BOARD_TYPE "waveshare-c6-touch-amoled-1.8")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_30_4)
+    set(BUILTIN_ICON_FONT font_awesome_30_4)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_64)
 elseif(CONFIG_BOARD_TYPE_WAVESHARE_S3_TOUCH_AMOLED_2_06)
     set(BOARD_TYPE "waveshare-s3-touch-amoled-2.06")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_30_4)
+    set(BUILTIN_ICON_FONT font_awesome_30_4)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+elseif(CONFIG_BOARD_TYPE_WAVESHARE_C6_TOUCH_AMOLED_2_06)
+    set(BOARD_TYPE "waveshare-c6-touch-amoled-2.06")
     set(BUILTIN_TEXT_FONT font_puhui_basic_30_4)
     set(BUILTIN_ICON_FONT font_awesome_30_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
@@ -264,6 +326,14 @@ elseif(CONFIG_BOARD_TYPE_WAVESHARE_S3_TOUCH_LCD_3_5B)
     set(BUILTIN_TEXT_FONT font_puhui_basic_16_4)
     set(BUILTIN_ICON_FONT font_awesome_16_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_32)
+elseif(CONFIG_BOARD_TYPE_WAVESHARE_S3_ePaper_1_54)
+    set(BOARD_TYPE "waveshare-s3-epaper-1.54")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
+    set(BUILTIN_ICON_FONT font_awesome_20_4)
+elseif(CONFIG_BOARD_TYPE_WAVESHARE_S3_RLCD_4_2)
+    set(BOARD_TYPE "waveshare-s3-rlcd-4.2")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_30_4)
+    set(BUILTIN_ICON_FONT font_awesome_30_4)
 elseif(CONFIG_BOARD_TYPE_WAVESHARE_S3_TOUCH_LCD_3_49)
     set(BOARD_TYPE "waveshare-s3-touch-lcd-3.49")
     set(LVGL_TEXT_FONT font_puhui_basic_30_4)
@@ -274,11 +344,26 @@ elseif(CONFIG_BOARD_TYPE_WAVESHARE_C6_LCD_1_69)
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+elseif(CONFIG_BOARD_TYPE_WAVESHARE_C6_TOUCH_LCD_1_83)
+    set(BOARD_TYPE "waveshare-c6-touch-lcd-1.83")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_16_4)
+    set(BUILTIN_ICON_FONT font_awesome_16_4)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_64)
 elseif(CONFIG_BOARD_TYPE_WAVESHARE_C6_TOUCH_AMOLED_1_43)
     set(BOARD_TYPE "waveshare-c6-touch-amoled-1.43")
     set(BUILTIN_TEXT_FONT font_puhui_basic_30_4)
     set(BUILTIN_ICON_FONT font_awesome_30_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+elseif(CONFIG_BOARD_TYPE_WAVESHARE_C6_TOUCH_AMOLED_1_32)
+    set(BOARD_TYPE "waveshare-c6-touch-amoled-1.32")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
+    set(BUILTIN_ICON_FONT font_awesome_20_4)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_32)
+elseif(CONFIG_BOARD_TYPE_WAVESHARE_S3_TOUCH_AMOLED_1_32)
+    set(BOARD_TYPE "waveshare-s3-touch-amoled-1.32")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
+    set(BUILTIN_ICON_FONT font_awesome_20_4)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_32)
 elseif(CONFIG_BOARD_TYPE_WAVESHARE_P4_NANO)
     set(BOARD_TYPE "waveshare-p4-nano")
     set(BUILTIN_TEXT_FONT font_puhui_basic_30_4)
@@ -342,6 +427,11 @@ elseif(CONFIG_BOARD_TYPE_LILYGO_T_DISPLAY_P4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
 elseif(CONFIG_BOARD_TYPE_MOVECALL_MOJI_ESP32S3)
     set(BOARD_TYPE "movecall-moji-esp32s3")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
+    set(BUILTIN_ICON_FONT font_awesome_20_4)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+elseif(CONFIG_BOARD_TYPE_MOVECALL_MOJI2_ESP32C5)
+    set(BOARD_TYPE "movecall-moji2-esp32c5")
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
@@ -423,6 +513,11 @@ elseif(CONFIG_BOARD_TYPE_XINGZHI_CUBE_1_54TFT_ML307)
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+elseif(CONFIG_BOARD_TYPE_XINGZHI_METAL_1_54_WIFI)
+    set(BOARD_TYPE "xingzhi-metal-1.54-wifi")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
+    set(BUILTIN_ICON_FONT font_awesome_20_4)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_64)  
 elseif(CONFIG_BOARD_TYPE_SEEED_STUDIO_SENSECAP_WATCHER)
     set(BOARD_TYPE "sensecap-watcher")
     set(BUILTIN_TEXT_FONT font_puhui_basic_30_4)
@@ -473,6 +568,16 @@ elseif(CONFIG_BOARD_TYPE_ZHENGCHEN_1_54TFT_ML307)
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+elseif(CONFIG_BOARD_TYPE_ZHENGCHEN_CAM)
+    set(BOARD_TYPE "zhengchen-cam")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
+    set(BUILTIN_ICON_FONT font_awesome_20_4)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+elseif(CONFIG_BOARD_TYPE_ZHENGCHEN_CAM_ML307)
+    set(BOARD_TYPE "zhengchen-cam-ml307")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
+    set(BUILTIN_ICON_FONT font_awesome_20_4)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_64)    
 elseif(CONFIG_BOARD_TYPE_SPOTPEAR_ESP32_S3_1_54_MUMA)
     set(BOARD_TYPE "sp-esp32-s3-1.54-muma")
     set(BUILTIN_TEXT_FONT font_puhui_basic_16_4)
@@ -526,6 +631,15 @@ elseif(CONFIG_BOARD_TYPE_WIRELESS_TAG_WTP4C5MP07S)
     set(BUILTIN_TEXT_FONT font_puhui_basic_30_4)
     set(BUILTIN_ICON_FONT font_awesome_30_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+elseif(CONFIG_BOARD_TYPE_AIPI_LITE)
+    set(BOARD_TYPE "aipi-lite")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_14_1)
+    set(BUILTIN_ICON_FONT font_awesome_14_1)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_32)
+elseif(CONFIG_BOARD_TYPE_HU_087)
+    set(BOARD_TYPE "hu-087")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_14_1)
+    set(BUILTIN_ICON_FONT font_awesome_14_1)
 endif()
 
 file(GLOB BOARD_SOURCES
@@ -547,6 +661,10 @@ else()
     list(APPEND SOURCES "audio/wake_words/esp_wake_word.cc")
 endif()
 
+# Auto Select Additional Sources
+if (CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING)
+    list(APPEND SOURCES "boards/common/blufi.cpp")
+endif ()
 # Select language directory according to Kconfig
 if(CONFIG_LANGUAGE_ZH_CN)
     set(LANG_DIR "zh-CN")
@@ -662,15 +780,43 @@ if(CONFIG_IDF_TARGET_ESP32)
                              "audio/codecs/es8388_audio_codec.cc"
                              "audio/codecs/es8389_audio_codec.cc"
                              "led/gpio_led.cc"
-                             "${CMAKE_CURRENT_SOURCE_DIR}/boards/common/esp32_camera.cc"
-                            "display/lvgl_display/jpg/image_to_jpeg.cpp"
+                             "display/lvgl_display/jpg/image_to_jpeg.cpp"
+                             "display/lvgl_display/jpg/jpeg_to_image.c"
+                             "boards/common/nt26_board.cc"
                              )
+endif()
+
+# Include EspVideo if target is ESP32S3 or ESP32P4
+if(CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4)
+    list(APPEND SOURCES "boards/common/esp_video.cc")
+endif()
+
+# Include Esp32Camera if target is ESP32S3
+if(CONFIG_IDF_TARGET_ESP32S3)
+    list(APPEND SOURCES "boards/common/esp32_camera.cc")
 endif()
 
 idf_component_register(SRCS ${SOURCES}
                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
+                    PRIV_REQUIRES
+                        esp_pm
+                        esp_psram
+                        esp_driver_gpio
+                        esp_driver_uart
+                        esp_driver_spi
+                        esp_driver_i2c
+                        esp_driver_i2s
+                        esp_driver_jpeg
+                        esp_driver_ppa
+                        esp_app_format
+                        app_update
+                        spi_flash
+                        console
+                        efuse
+                        bt
+                        wifi_provisioning
                     )
 
 # Use target_compile_definitions to define BOARD_TYPE, BOARD_NAME
@@ -681,6 +827,8 @@ endif()
 target_compile_definitions(${COMPONENT_LIB}
                     PRIVATE BOARD_TYPE=\"${BOARD_TYPE}\" BOARD_NAME=\"${BOARD_NAME}\"
                     PRIVATE BUILTIN_TEXT_FONT=${BUILTIN_TEXT_FONT} BUILTIN_ICON_FONT=${BUILTIN_ICON_FONT}
+                    PRIVATE FREE_RTOS
+                    PRIVATE MQTT_SIP_PROTOCOL_ENABLED
                     )
 
 # Add generation rules
@@ -872,6 +1020,14 @@ if ("${size}" AND "${offset}")
         get_assets_local_file("${CONFIG_CUSTOM_ASSETS_FILE}" ASSETS_LOCAL_FILE)
         esptool_py_flash_to_partition(flash "assets" "${ASSETS_LOCAL_FILE}")
         message(STATUS "Custom assets flash configured: ${ASSETS_LOCAL_FILE} -> assets partition")
+    elseif(CONFIG_FLASH_EXPRESSION_ASSETS)
+        set(ASSETS_NAME "expression_assets")
+        set(ASSETS_PARTITION "assets")
+        set(ASSETS_FILE "${CMAKE_BINARY_DIR}/${ASSETS_NAME}.bin")
+
+        build_speaker_assets_bin("${ASSETS_PARTITION}" ${EMOTE_RESOLUTION} ${ASSETS_FILE} ${CONFIG_MMAP_FILE_NAME_LENGTH})
+        message(STATUS "Generated emote assets: ${ASSETS_FILE} -> ${ASSETS_PARTITION} partition")
+        esptool_py_flash_to_partition(flash "${ASSETS_PARTITION}" "${ASSETS_FILE}")
     elseif(CONFIG_FLASH_NONE_ASSETS)
         message(STATUS "Assets flashing disabled (FLASH_NONE_ASSETS)")
     endif()

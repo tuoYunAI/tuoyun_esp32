@@ -100,13 +100,15 @@ void McpServer::AddCommonTools() {
     auto camera = board.GetCamera();
     if (camera) {
         AddTool("self.camera.take_photo",
-            "Take a photo and explain it. Use this tool after the user asks you to see something.\n"
+            "Always remember you have a camera. If the user asks you to see something, use this tool to take a photo and then explain it.\n"
             "Args:\n"
             "  `question`: The question that you want to ask about the photo.\n"
             "Return:\n"
             "  A JSON object that provides the photo information.",
             PropertyList({
-                Property("question", kPropertyTypeString)
+                Property("question", kPropertyTypeString),
+                Property("url", kPropertyTypeString),
+                Property("token", kPropertyTypeString)
             }),
             [camera](const PropertyList& properties) -> ReturnValue {
                 // Lower the priority to do the camera capture
@@ -116,7 +118,13 @@ void McpServer::AddCommonTools() {
                     throw std::runtime_error("Failed to capture photo");
                 }
                 auto question = properties["question"].value<std::string>();
-                return camera->Explain(question);
+                std::string url = properties["url"].value<std::string>();
+                std::string token = properties["token"].value<std::string>();
+                camera->SetExplainUrl(url, token);
+                ESP_LOGI(TAG, "set url: %s, token: %s", url.c_str(), token.c_str());
+                std::string file_url = camera->Explain(question);
+                ESP_LOGI(TAG, "explain result url: %s", file_url.c_str());
+                return new ImageContent(std::string("image/jpeg"), file_url);
             });
     }
 #endif
@@ -159,9 +167,7 @@ void McpServer::AddUserOnlyTools() {
             
             auto& app = Application::GetInstance();
             app.Schedule([url, &app]() {
-                auto ota = std::make_unique<Ota>();
-                
-                bool success = app.UpgradeFirmware(*ota, url);
+                bool success = app.UpgradeFirmware(url);
                 if (!success) {
                     ESP_LOGE(TAG, "Firmware upgrade failed");
                 }
@@ -397,7 +403,6 @@ void McpServer::ParseMessage(const cJSON* json) {
         std::string message = "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"" BOARD_NAME "\",\"version\":\"";
         message += app_desc->version;
         message += "\"}}";
-        ESP_LOGI(TAG, "Initialize response: %s", message.c_str());
         ReplyResult(id_str, message);
     } else if (method_str == "tools/list") {
         std::string cursor_str = "";
@@ -507,7 +512,7 @@ void McpServer::GetToolsList(std::string id, const std::string& cursor, bool lis
     } else {
         json += "],\"nextCursor\":\"" + next_cursor + "\"}";
     }
-    ESP_LOGI(TAG, "tools/list: Returning tools list with nextCursor: %s", json.c_str());
+    
     ReplyResult(id, json);
 }
 

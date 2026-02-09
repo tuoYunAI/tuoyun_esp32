@@ -16,7 +16,6 @@
 #include "system_info.h"
 #include "wifi_provisioning/manager.h"
 #include "wifi_provisioning/scheme_ble.h"
-#include "wifi_station.h"
 
 
 #define TAG "WifiConfigurationBluetooth"
@@ -83,11 +82,6 @@ void WifiConfigurationBluetooth::Start(std::string unique_code)
 {
     g_board_unique_code = unique_code;
 
-    auto& wifi_station = WifiStation::GetInstance();
-    if (wifi_station.IsConnected()) {
-        ESP_LOGI(TAG, "WiFi already connected, no need to start Bluetooth WiFi configuration.");
-        wifi_station.Stop();
-    }
     ESP_LOGI(TAG, "Starting Bluetooth WiFi configuration...");
     
     ESP_ERROR_CHECK(esp_netif_init());

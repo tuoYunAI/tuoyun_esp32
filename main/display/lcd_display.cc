@@ -137,7 +137,7 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
         .io_handle = panel_io_,
         .panel_handle = panel_,
         .control_handle = nullptr,
-        .buffer_size = static_cast<uint32_t>(width_ * 20),
+        .buffer_size = static_cast<uint32_t>(width_ * 10),
         .double_buffer = false,
         .trans_size = 0,
         .hres = static_cast<uint32_t>(width_),
@@ -198,7 +198,7 @@ RgbLcdDisplay::RgbLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
     const lvgl_port_display_cfg_t display_cfg = {
         .io_handle = panel_io_,
         .panel_handle = panel_,
-        .buffer_size = static_cast<uint32_t>(width_ * 20),
+        .buffer_size = static_cast<uint32_t>(width_ * height_),
         .double_buffer = true,
         .hres = static_cast<uint32_t>(width_),
         .vres = static_cast<uint32_t>(height_),
@@ -209,6 +209,7 @@ RgbLcdDisplay::RgbLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
         },
         .flags = {
             .buff_dma = 1,
+            .buff_spiram = 1,
             .swap_bytes = 0,
             .full_refresh = 1,
             .direct_mode = 1,

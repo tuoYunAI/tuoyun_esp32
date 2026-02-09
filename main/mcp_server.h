@@ -30,7 +30,7 @@ public:
     ImageContent(const std::string& mime_type, const std::string& data) {
         mime_type_ = mime_type;
         // base64 encode data
-        encoded_data_ = Base64Encode(data);
+        encoded_data_ = data;// Base64Encode(data);
     }
 
     std::string to_json() const {
@@ -277,9 +277,10 @@ public:
 
         if (std::holds_alternative<ImageContent*>(return_value)) {
             auto image_content = std::get<ImageContent*>(return_value);
-            cJSON* image = cJSON_CreateObject();
-            cJSON_AddStringToObject(image, "type", "image");
-            cJSON_AddStringToObject(image, "image", image_content->to_json().c_str());
+            cJSON* image = cJSON_Parse(image_content->to_json().c_str());
+            //cJSON_CreateObject();
+            //cJSON_AddStringToObject(image, "type", "image");
+            //cJSON_AddStringToObject(image, "data", image_content->to_json().c_str());
             cJSON_AddItemToArray(content, image);
             delete image_content;
         } else {

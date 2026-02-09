@@ -20,7 +20,7 @@ WebsocketProtocol::~WebsocketProtocol() {
     vEventGroupDelete(event_group_handle_);
 }
 
-bool WebsocketProtocol::Start() {
+bool WebsocketProtocol::Start(bool report_error) {
     // Only connect to server when audio channel is needed
     return true;
 }
@@ -75,11 +75,11 @@ bool WebsocketProtocol::IsAudioChannelOpened() const {
     return websocket_ != nullptr && websocket_->IsConnected() && !error_occurred_ && !IsTimeout();
 }
 
-void WebsocketProtocol::CloseAudioChannel() {
+void WebsocketProtocol::CloseAudioChannel(bool notify_server) {
     websocket_.reset();
 }
 
-bool WebsocketProtocol::OpenAudioChannel() {
+bool WebsocketProtocol::OpenAudioChannel(std::string const& wakeWord) {
     Settings settings("websocket", false);
     std::string url = settings.GetString("url");
     std::string token = settings.GetString("token");

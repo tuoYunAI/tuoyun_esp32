@@ -8,11 +8,69 @@
 #include <esp_partition.h>
 #include <esp_app_desc.h>
 #include <esp_ota_ops.h>
+#include <esp_heap_caps.h>
 #if CONFIG_IDF_TARGET_ESP32P4
 #include "esp_wifi_remote.h"
 #endif
 
 #define TAG "SystemInfo"
+
+BaseType_t xTaskCreateOnPsram(TaskFunction_t pxTaskCode,
+                            const char * const pcName,
+                            const configSTACK_DEPTH_TYPE usStackDepth,
+                            void * const pvParameters,
+                            UBaseType_t uxPriority,
+                            TaskHandle_t * const pxCreatedTask) {
+    StackType_t *task_stack = (StackType_t *)heap_caps_malloc(usStackDepth, MALLOC_CAP_SPIRAM);
+    StaticTask_t *task_tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    if (task_stack && task_tcb) {
+        TaskHandle_t handle = xTaskCreateStatic(pxTaskCode, pcName, usStackDepth, pvParameters, uxPriority, task_stack, task_tcb);
+        if (handle != NULL) {
+            if (pxCreatedTask != NULL) {
+                *pxCreatedTask = handle;
+            }
+            return pdPASS;
+        }
+    }
+
+    if (task_stack) free(task_stack);
+    if (task_tcb) free(task_tcb);
+
+    ESP_LOGE(TAG, "Failed to allocate stack in PSRAM for %s, falling back to internal", pcName);
+    BaseType_t ret = xTaskCreate(pxTaskCode, pcName, usStackDepth, pvParameters, uxPriority, pxCreatedTask);
+    ESP_LOGI(TAG, "xTaskCreate %s %s", pcName, ret == pdPASS ? "succeeded" : "failed");
+    return ret;
+}
+
+BaseType_t xTaskCreateOnPsramPinnedToCore(TaskFunction_t pxTaskCode,
+                                        const char * const pcName,
+                                        const configSTACK_DEPTH_TYPE usStackDepth,
+                                        void * const pvParameters,
+                                        UBaseType_t uxPriority,
+                                        TaskHandle_t * const pxCreatedTask,
+                                        const BaseType_t xCoreID) {
+    StackType_t *task_stack = (StackType_t *)heap_caps_malloc(usStackDepth, MALLOC_CAP_SPIRAM);
+    StaticTask_t *task_tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    if (task_stack && task_tcb) {
+        TaskHandle_t handle = xTaskCreateStaticPinnedToCore(pxTaskCode, pcName, usStackDepth, pvParameters, uxPriority, task_stack, task_tcb, xCoreID);
+        if (handle != NULL) {
+            if (pxCreatedTask != NULL) {
+                *pxCreatedTask = handle;
+            }
+            return pdPASS;
+        }
+    }
+
+    if (task_stack) free(task_stack);
+    if (task_tcb) free(task_tcb);
+
+    ESP_LOGE(TAG, "Failed to allocate stack in PSRAM for %s, falling back to internal", pcName);
+    BaseType_t ret = xTaskCreatePinnedToCore(pxTaskCode, pcName, usStackDepth, pvParameters, uxPriority, pxCreatedTask, xCoreID);
+    ESP_LOGI(TAG, "xTaskCreatePinnedToCore %s %s", pcName, ret == pdPASS ? "succeeded" : "failed");
+    return ret;
+}
 
 size_t SystemInfo::GetFlashSize() {
     uint32_t flash_size;
@@ -147,5 +205,12 @@ void SystemInfo::PrintTaskList() {
 void SystemInfo::PrintHeapStats() {
     int free_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     int min_free_sram = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
-    ESP_LOGI(TAG, "free sram: %u minimal sram: %u", free_sram, min_free_sram);
+    int sram_total = heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
+    int psram_total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    int psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    int psram_min_free = heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM);
+    ESP_LOGI(TAG, "internal ram, total: %u, free sram: %u minimal sram: %u;  psram ram, total: %u, free psram: %u minimal psram: %u", 
+        sram_total, free_sram, min_free_sram,
+        psram_total, psram_free, psram_min_free);
 }
+
