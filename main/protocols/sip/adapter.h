@@ -3,7 +3,6 @@
 
 
 #include "sip.h"
-
 #include <ctype.h>
 
 
@@ -66,7 +65,7 @@ sip_ret_t adapter_start_periodic_task(void (*task_func)(void *), int period_ms, 
 /**
  * @brief  Start a new thread
  */
-void adapter_start_thread(void (*task_func)(void*), const char* name, int stack_size, int priority);
+sip_ret_t adapter_start_thread(void (*task_func)(void*), const char* name, int stack_size, int priority);
 
 /**
  * @brief  Delay current task for specified milliseconds
@@ -78,6 +77,35 @@ void adapter_task_delay(int delay_ms);
  */
 void* adapter_create_json_object();
 
+/**
+ * @brief  Create a new JSON array
+ */
+void* adapter_create_json_array();
+
+/**
+ * @brief  Create a new JSON integer object
+ */
+void* adapter_json_object_new_int(int value);
+
+/**
+ * @brief  Create a new JSON string object
+ */
+void* adapter_json_object_new_string(const char* value);
+
+/**
+ * @brief  Create a new JSON boolean object
+ */
+void* adapter_json_object_new_boolean(bool value);
+
+/**
+ * @brief  Add a JSON object to a JSON array
+ */
+void adapter_array_add_json_object(void* array, void* obj);
+
+/**
+ * @brief  Add a JSON object to a JSON object with a specified key
+ */
+void adapter_put_json_object_value(void* root, char* key, void* obj);
 
 /**
  * @brief  Add a string value to a JSON object
@@ -97,11 +125,22 @@ void* adapter_parse_json_string(const char* json_str);
 char* adapter_serialize_json_to_string(void* obj);
 
 
+/**
+ * @brief  Get an integer value from a JSON object by key
+ */
+int adapter_get_json_int_value(void* obj, const char* key, int default_value);
 
 /**
  * @brief  Get a string value from a JSON object by key
  */
 char* adapter_get_json_string_value(void* obj, const char* key);
+
+bool adapter_get_json_boolean_value(void* obj, const char* key, bool default_value);
+
+/**
+ * @brief  Get a JSON node from a JSON object by key
+ */
+void* adapter_get_json_node_value(void* obj, const char* key);
 
 /**
  * @brief  Delete a JSON object
@@ -128,6 +167,15 @@ void adapter_lock_sip_list_mutex();
  */
 void adapter_unlock_sip_list_mutex();
 
+/**
+ * @brief  Lock MCP tools list mutex
+ */
+void adapter_lock_mcp_mutex();
+
+/**
+ * @brief  Unlock MCP tools list mutex
+ */
+void adapter_unlock_mcp_mutex();
 
 /**
  * @brief  Start media traffic tunnel after call is established
@@ -184,6 +232,7 @@ void on_server_session_update_notify(message_session_event_ptr session_event);
  */
 void on_server_mcp_call(const char* message);
 
+int adapter_get_audio_volume();
 
 #ifdef __cplusplus
 }

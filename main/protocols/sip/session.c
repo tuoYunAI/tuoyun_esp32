@@ -9,8 +9,8 @@
  */
 #define MOVE
 
-#define TAG             "[SESSION]"
-#define LOG_LEVEL_ENABLED  LOG_INFO_LEVEL
+#define ADAPTER_LOG_TAG      "[SESSION]"
+#define LOG_LEVEL_ENABLED    LOG_INFO_LEVEL
 #include "adapter.h"
 
 static void send_invite_ack();
@@ -220,7 +220,7 @@ static void proc_response_info(MOVE received_sip_message_ptr message){
         return;
     }
     if (is_response_ok(message)) {
-        printf("INFO request acknowledged");
+        LOG_INFO("INFO request acknowledged");
     }
     m_session_state.last_req_message_ms = 0;
     m_session_state.last_req_message_seq = 0;
@@ -318,7 +318,7 @@ static void proc_request_message(MOVE received_sip_message_ptr  message){
 }
 
 static void proc_request_bye(MOVE received_sip_message_ptr message){
-    LOG_INFO("Received BYE 1");
+    adapter_lock_sip_mutex();
     if (strncmp(message->call_id, m_session_state.session_id, sizeof(m_session_state.session_id)) != 0){
         LOG_INFO("BYE call_id mismatch, ignore: %s vs %s", message->call_id, m_session_state.session_id);
         free(message);
@@ -326,18 +326,16 @@ static void proc_request_bye(MOVE received_sip_message_ptr message){
     }
     LOG_INFO("BYE call_id matched: %s", message->call_id);
     adapter_lock_sip_mutex();
-    LOG_INFO("Received BYE 2");
     // 处理 BYE 请求
     m_session_state.session_status = SESSION_STATUS_IDLE;
     LOG_INFO("Processing BYE request from server");
     on_call_terminated_by_server();
-    
-    LOG_INFO("Received BYE 3");
+	
     char *out_msg = NULL;
     size_t out_len = 0;
     int ret = build_200_ok_response(message, &out_msg, &out_len);
     if (ret != 0 || out_len == 0){
-        printf("failed to response to BYE");
+        LOG_INFO("failed to response to BYE");
     }else{
         transmit_sip(out_msg);
         free_sip_message(out_msg);

@@ -4,7 +4,7 @@
 #include "osip_adapter.h"
 #include "string.h"
 
-#define TAG             "[SIP]"
+#define ADAPTER_LOG_TAG    "[OSIP-ADAPTER]"
 #define LOG_LEVEL_ENABLED  LOG_INFO_LEVEL
 #include "adapter.h"
 

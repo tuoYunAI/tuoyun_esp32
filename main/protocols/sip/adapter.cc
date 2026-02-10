@@ -11,7 +11,7 @@
 #include <esp_log.h>
 #include <esp_heap_caps.h>
 
-#define TAG                "[SIP-ADAPTER]"
+#define ADAPTER_LOG_TAG    "[ADAPTER]"
 #define LOG_LEVEL_ENABLED  LOG_INFO_LEVEL
 #include "adapter.h"
 
@@ -63,16 +63,17 @@ uint32_t adapter_get_system_ms(void){
 
 
 
-void adapter_start_thread(void (*task_func)(void*), const char* name, int stack_size, int priority){
+sip_ret_t adapter_start_thread(void (*task_func)(void*), const char* name, int stack_size, int priority){
     StackType_t *task_stack = (StackType_t *)heap_caps_malloc(stack_size, MALLOC_CAP_SPIRAM);
     StaticTask_t *task_tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (task_stack && task_tcb) {
-        xTaskCreateStatic(task_func, name ? name : "poll", stack_size, NULL, priority, task_stack, task_tcb);
+    BaseType_t ret;    if (task_stack && task_tcb) {
+        TaskHandle_t ret =xTaskCreateStatic(task_func, name ? name : "poll", stack_size, NULL, priority, task_stack, task_tcb);
+        return ret != NULL ? RET_OK : RET_ERROR;
     } else {
         if (task_stack) free(task_stack);
         if (task_tcb) free(task_tcb);
         LOG_INFO("@@@@@@@@@@@@@@@@@Failed to allocate stack in PSRAM for %s, falling back to internal", name ? name : "poll");
-        xTaskCreate(
+        BaseType_t ret = xTaskCreate(
             task_func,
             name ? name:"poll",
             stack_size,
@@ -80,7 +81,9 @@ void adapter_start_thread(void (*task_func)(void*), const char* name, int stack_
             priority,
             NULL
         );
+        return ret == pdPASS ? RET_OK : RET_ERROR;
     }
+    
 }
 
 /**
@@ -164,6 +167,41 @@ void* adapter_create_json_object(){
     return root;
 }
 
+
+void* adapter_create_json_array(){
+    cJSON* array = cJSON_CreateArray();
+    return array;
+}
+
+void* adapter_json_object_new_int(int value){
+    cJSON* obj = cJSON_CreateNumber(value);
+    return obj;
+}
+
+
+
+void* adapter_json_object_new_string(const char* value){
+    cJSON* obj = cJSON_CreateString(value);
+    return obj;
+}
+
+
+void* adapter_json_object_new_boolean(bool value){
+    cJSON* obj = cJSON_CreateBool(value);
+    return obj;
+}
+
+
+void adapter_array_add_json_object(void* array, void* obj){
+    cJSON_AddItemToArray((cJSON*)array, (cJSON*)obj);
+}
+
+
+
+void adapter_put_json_object_value(void* root, char* key, void* obj){
+    cJSON_AddItemToObject((cJSON*)root, key, (cJSON*)obj);
+}
+
 void* adapter_put_json_string_value(void* obj, const char* key, const char* value){
     if (!obj || !key || !value) return NULL;
     cJSON_AddStringToObject((cJSON*)obj, key, value);
@@ -176,6 +214,15 @@ char* adapter_serialize_json_to_string(void* obj){
     return json_string;
 }
 
+int adapter_get_json_int_value(void* obj, const char* key, int default_value){
+    if (!obj || !key) return default_value;
+    cJSON* item = cJSON_GetObjectItem((const cJSON*)obj, key);
+    if (!item) return default_value;
+    if (cJSON_IsNumber(item)) {
+        return item->valueint;
+    }
+    return default_value;
+}
 
 void* adapter_parse_json_string(const char* json_str){
     if (!json_str) return NULL;
@@ -191,6 +238,23 @@ char* adapter_get_json_string_value(void* obj, const char* key){
         return item->valuestring;
     }
     return NULL;
+}
+
+bool adapter_get_json_boolean_value(void* obj, const char* key, bool default_value){
+    if (!obj || !key) return default_value;
+    cJSON* item = cJSON_GetObjectItem((const cJSON*)obj, key);
+    if (!item) return default_value;
+    if (cJSON_IsBool(item)) {
+        return item->valueint == 1;
+    }
+    return default_value;   
+}
+
+
+void* adapter_get_json_node_value(void* obj, const char* key){
+    if (!obj || !key) return NULL;
+    cJSON* item = cJSON_GetObjectItem((const cJSON*)obj, key);
+    return item;
 }
 
 void adapter_delete_json_object(void* obj){
@@ -231,6 +295,24 @@ void adapter_unlock_sip_list_mutex(){
     }
 }
 
+
+static StaticSemaphore_t s_mcp_session_mutex_buf;
+static SemaphoreHandle_t s_mcp_session_mutex = xSemaphoreCreateRecursiveMutexStatic(&s_mcp_session_mutex_buf);
+
+
+void adapter_lock_mcp_mutex(){
+if (s_mcp_session_mutex) {
+        xSemaphoreTakeRecursive(s_mcp_session_mutex, portMAX_DELAY);
+        //LOG_INFO("@@@@@@@@@adapter_lock_mcp_mutex got mutex");
+    }
+}
+
+void adapter_unlock_mcp_mutex(){
+if (s_mcp_session_mutex) {
+        xSemaphoreGiveRecursive(s_mcp_session_mutex);
+        //LOG_INFO("@@@@@@@@@adapter_unlock_mcp_mutex released mutex");
+    }
+}
 
 int adapter_start_traffic_tunnel(media_parameter_ptr media_param){
     // To be implemented if needed
@@ -287,4 +369,11 @@ void on_server_mcp_call(const char* message){
 
     auto& app = Application::GetInstance();
     app.ProcMcpMessage(std::string(message));
+}
+int adapter_get_audio_volume(){
+    return 0;
+}
+
+void init_adapter(){
+    
 }
