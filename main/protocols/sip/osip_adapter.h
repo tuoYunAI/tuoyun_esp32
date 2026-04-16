@@ -8,22 +8,22 @@
  */
 #define OPUS_FRAME_DURATION_MS 60
 
-/**
+#define EVENT_MSG_NAME_TAG   "evt-"
+#define CONTROL_MSG_NAME_TAG "ctrl-"
+#define DATA_MSG_NAME_TAG    "data-"
 
- * Device control event name in SIP message payload
- */
-#define DEVICE_CTRL_EVENT_ALERT       "alert"
-#define DEVICE_CTRL_EVENT_ACTIVATE    "activate"
-#define DEVICE_CTRL_EVENT_EXPIRE      "expire"
-#define DEVICE_CTRL_EVENT_STT         "stt"
-#define DEVICE_CTRL_EVENT_LISTEN      "listen"
-#define DEVICE_CTRL_EVENT_SPEAKER     "speaker"
-
-
-#define WORKING_CMD_START        "start"
-#define WORKING_CMD_STOP         "stop"
-#define WORKING_CMD_TEXT         "text"
-#define WORKING_CMD_SENTENCE_START   "sentence_start"
+#define DCP_REGISTER              "register"
+#define DCP_AUDIO_INPUT_STATE     "audio.input.state"
+#define DCP_AUDIO_INPUT_TEXT      "audio.input.text"
+#define DCP_AUDIO_OUTPUT_START    "audio.output.start"
+#define DCP_AUDIO_OUTPUT_TEXT     "audio.output.text"
+#define DCP_AUDIO_OUTPUT_STOP     "audio.output.stop"
+#define DCP_SESSION_BARGE_IN      "session.barge_in"
+#define DCP_SYSTEM_NOTIFICATION   "system.notification"
+#define DCP_DEVICE_LIFECYCLE      "device.lifecycle" 
+#define DCP_DEVICE_MODE_SET       "device.mode.set"
+#define DCP_DEVICE_MOTION_EXECUTE "device.motion.execute"
+#define DCP_DEVICE_MOTION_STOP    "device.motion.stop"
 
 
 
@@ -48,6 +48,9 @@ typedef struct sip_register_param{
    * 序号
    */
   int cseq_num;
+
+  register_param_t register_param; // 注册参数, 包含网络状态、电池状态等, 供build_register构建消息时使用
+  
 }sip_register_param_t, *sip_register_param_ptr;
 
 /**
@@ -97,6 +100,12 @@ typedef struct uplink_sdp_parameter {
    * 唤醒词 可选参数, 如果没有唤醒词则传NULL
    */
   char *wake_up_word;
+  /**
+   * 是否支持帧聚合，0表示不支持，1表示支持
+   */
+  int support_frame_aggregation;
+
+  int support_redundant; // 是否支持冗余发送，0表示不支持，1表示支持
 } uplink_sdp_parameter_t, *uplink_sdp_parameter_ptr;
 
 
@@ -246,14 +255,6 @@ typedef struct received_sip_message{
 }received_sip_message_t, *received_sip_message_ptr;
 
 
-typedef struct info_param{
-  char event[32];
-  char command[32]; 
-  char mode[32];
-}info_param_t, *info_param_ptr;
-
-
-
 /**
  * 是否为响应消息, 是则返回1, 否则返回0
  */
@@ -265,30 +266,50 @@ int is_response_message(received_sip_message_ptr msg);
 int is_response_ok(received_sip_message_ptr msg);
       
 
-int build_200_ok_response(received_sip_message_ptr request, char **out_msg, size_t *out_len);
+sip_ret_t build_200_ok_response(received_sip_message_ptr request, char **out_msg, size_t *out_len);
 
-int build_register(sip_register_param_ptr param, char **out_msg, size_t *out_len);
+sip_ret_t build_register(sip_register_param_ptr param, char **out_msg, size_t *out_len);
 
-int parse_sdp(const char *sdp_buf, downlink_sdp_parameter_ptr param);
+sip_ret_t parse_sdp(const char *sdp_buf, downlink_sdp_parameter_ptr param);
 
-int build_invite(sip_invite_param_ptr param, char **out_msg, size_t *out_len);
+sip_ret_t build_invite(sip_invite_param_ptr param, char **out_msg, size_t *out_len);
 
 
 
-int build_ack(received_sip_message_ptr response, const char *uid, const char *device_ip, int cseq_num, char **out_msg, size_t *out_len);
+sip_ret_t build_ack(received_sip_message_ptr response, const char *uid, const char *device_ip, char **out_msg, size_t *out_len);
 
-int build_bye(received_sip_message_ptr invite, char* uid, char* device_ip, int cseq_num, char** out_msg, size_t* out_len); 
+sip_ret_t build_bye(received_sip_message_ptr invite, char* uid, char* device_ip, int cseq_num, char** out_msg, size_t* out_len); 
 
-int build_listen_info(
+sip_ret_t build_audio_input_state_start(
                received_sip_message_ptr response,
                const char *uid,
                const char *device_ip,
                int cseq_num,
-               info_param_ptr info,
+               event_audio_input_state_start_ptr param,
                char **out_msg,
                size_t *out_len);    
        
-int sip_parse_incoming_message(const char *raw_msg, size_t msg_len, received_sip_message_ptr *msg_info);
+sip_ret_t build_audio_input_state_stop(
+               received_sip_message_ptr response,
+               const char *uid,
+               const char *device_ip,
+               int cseq_num,
+               event_audio_input_state_stop_ptr param,
+               char **out_msg,
+               size_t *out_len);    
+
+sip_ret_t build_session_barge_in(
+               received_sip_message_ptr response,
+               const char *uid,
+               const char *device_ip,
+               int cseq_num,
+               event_session_barge_in_ptr param,
+               char **out_msg,
+               size_t *out_len);                   
+
+dcp_cmd_type_t parse_dcp_message(char* data, void** out_param);
+
+sip_ret_t sip_parse_incoming_message(const char *raw_msg, size_t msg_len, received_sip_message_ptr *msg_info);
 
 void free_sip_message(char* sip);
    

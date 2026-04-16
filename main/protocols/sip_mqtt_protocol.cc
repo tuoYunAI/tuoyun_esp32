@@ -56,7 +56,11 @@ bool SipMqttProtocol::SendFinishCall(){
 
 
 void SipMqttProtocol::SendAbortSpeaking(AbortReason reason) {
-    send_abort_speaking(reason == kAbortReasonWakeWordDetected ? ABORT_REASON_WAKE_WORD_DETECTED : ABORT_REASON_NONE);
+    event_session_barge_in_t param = {
+        .reason = reason == kAbortReasonWakeWordDetected ? BARGE_IN_REASON_WAKE_WORD_DETECTED : BARGE_IN_REASON_NONE,
+        .text = {0}
+    };
+    send_abort_speaking(&param);
 }
 
 void SipMqttProtocol::SendWakeWordDetected(const std::string& wake_word) {
@@ -78,7 +82,7 @@ void SipMqttProtocol::SendStartListening(ListeningMode mode) {
 }
 
 void SipMqttProtocol::SendStopListening() {
-    send_stop_listening();
+    send_stop_listening(AUDIO_INPUT_STOP_REASON_NONE);
 }
 
 
@@ -125,41 +129,4 @@ void SipMqttProtocol::OnCallTerminatedByServer() {
 
 void SipMqttProtocol::OnCallTerminatedAck() {
     OnCallTerminatedByServer();
-}
-
-void SipMqttProtocol::OnServerMessageNotify(server_message_notify_ptr message) {
-    if (message == nullptr) {
-        ESP_LOGE(TAG, "onServerMessageNotify: message is null");
-        return;
-    }
-    auto& app = Application::GetInstance();
-    app.ProcAlertMessage(message);
-}
-
-void SipMqttProtocol::OnServerSessionUpdateNotify(message_session_event_ptr notify) {
-    if (notify == nullptr) {
-        ESP_LOGE(TAG, "onServerSessionUpdateNotify: notify is null");
-        return;
-    }
-    auto& app = Application::GetInstance();
-    switch (notify->event)
-    {
-    case CTRL_EVENT_USER_TEXT:
-        app.ShowUserText(notify->text);
-        break;
-    case CTRL_EVENT_SPEAKER:
-        if (notify->status == WORKING_STATUS_START || notify->status == WORKING_STATUS_TEXT) {
-            app.StartSpeaking(std::string(notify->text));
-            app.ShowEmotion(std::string(notify->emotion));
-        } else if (notify->status == WORKING_STATUS_STOP || notify->status == WORKING_STATUS_STOP_PENDING) {
-            ESP_LOGI(TAG, "Stopping speaking as per server notification: %d", notify->status);
-            app.StopSpeaking();
-        }
-        break;
-    case CTRL_EVENT_LISTEN:
-        /* code */
-        break;
-    default:
-        break;
-    }
 }

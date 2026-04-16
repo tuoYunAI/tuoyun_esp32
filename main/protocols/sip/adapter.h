@@ -16,12 +16,13 @@ extern "C" {
  * 否则在处理 SIP 消息时可能会阻塞 MQTT 客户端，导致不可预见的异常
  */
 #define SIP_MESSAGE_CACHED_IN_LIST       
-
-#define REGISTER_EXPIRE_SECOND   300      //注册间隔5分钟   
-#define COMMAND_TIMEOUT_MS       30000         //命令超时时间
-#define SESSION_SUPORT_MCP       1       //是否支持MCP扩展
-#define SESSION_OPUS_CBR         0            //opus是否使用cbr编码
-#define SESSION_AUDIO_FRAME_GAP  60           //音频帧间隔ms
+#define DCP_VERSION                            "2.1"
+#define REGISTER_EXPIRE_SECOND                 300      //注册间隔5分钟   
+#define COMMAND_TIMEOUT_MS                     30000         //命令超时时间
+#define SESSION_SUPORT_MCP                     1       //是否支持MCP扩展
+#define SESSION_OPUS_CBR                       0       //opus是否使用cbr编码
+#define SESSION_AUDIO_FRAME_GAP                60      //音频帧间隔ms
+#define SESSION_SUPPORT_FRAME_AGGREGATION      0       //是否支持帧聚合，开启后如果服务端发送的帧将把3个帧放在一个UDP中下发，减少处理开销和丢包率，但会增加一点点编码延迟
 
 
 
@@ -220,12 +221,45 @@ void on_call_terminated_ack();
 /**
  * @brief  Callback when server sends message notification
  */
-void on_server_message_notify(server_message_notify_ptr notify);
+void on_server_notify(event_system_notification_ptr notify);
+
+/**
+ * @brief  Callback when received a command from server to set device mode
+ */
+void on_set_device_mode(control_device_mode_set_ptr params);
+
+/**
+ * @brief  Callback when received a command from server to execute motion
+ */
+void on_execute_motion(control_device_motion_execute_ptr params);
+
+/**
+ * @brief  Callback when received a command from server to stop motion
+ */
+void on_stop_motion(control_device_motion_stop_ptr params);
+
+/**
+ * @brief  Callback when server sends lifecycle event notification, 
+ * used to notify the application layer of the current lifecycle 
+ * status of the device, such as activation, deactivation, etc.
+ */
+void on_server_lifecycle_event(event_device_lifecycle_ptr lifecycle);
+
+/**
+ * @brief  Callback when server sends session input text notification, 
+ *  used to notify the application layer of the text content input audio.
+ */
+void on_server_session_input_text_notify(data_audio_input_text_ptr audio_input_text);
+
+/**
+ * @brief  Callback when server sends session output text notification,
+ */
+void on_server_session_output_text_notify(data_audio_output_text_ptr audio_output_text);
 
 /**
  * @brief  Callback when server sends session update notification
  */ 
-void on_server_session_update_notify(message_session_event_ptr session_event);
+void on_server_session_update_notify(control_audio_output_state_ptr session_event);
 
 /**
  * @brief  Callback when server sends MCP call message

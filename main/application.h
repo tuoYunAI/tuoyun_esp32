@@ -128,8 +128,8 @@ public:
     void ShowUserText(const std::string& message);
     void ShowEmotion(const std::string& emotion);
     void ProcMcpMessage(const std::string& message);
-    void ProcSystemCommand(server_op_command_t command);
-    void ProcAlertMessage(server_message_notify_ptr alert);
+    //void ProcSystemCommand(server_op_command_t command);
+    void ProcAlertMessage(event_system_notification_ptr alert);
 private:
     Application();
     ~Application();

@@ -214,6 +214,11 @@ char* adapter_serialize_json_to_string(void* obj){
     return json_string;
 }
 
+void* adapter_parse_json_string(const char* json_str){
+    if (!json_str) return NULL;
+    cJSON* root = cJSON_Parse(json_str);
+    return root;
+}
 int adapter_get_json_int_value(void* obj, const char* key, int default_value){
     if (!obj || !key) return default_value;
     cJSON* item = cJSON_GetObjectItem((const cJSON*)obj, key);
@@ -222,12 +227,6 @@ int adapter_get_json_int_value(void* obj, const char* key, int default_value){
         return item->valueint;
     }
     return default_value;
-}
-
-void* adapter_parse_json_string(const char* json_str){
-    if (!json_str) return NULL;
-    cJSON* root = cJSON_Parse(json_str);
-    return root;
 }
 
 char* adapter_get_json_string_value(void* obj, const char* key){
@@ -249,7 +248,6 @@ bool adapter_get_json_boolean_value(void* obj, const char* key, bool default_val
     }
     return default_value;   
 }
-
 
 void* adapter_get_json_node_value(void* obj, const char* key){
     if (!obj || !key) return NULL;
@@ -349,14 +347,126 @@ void on_call_terminated_ack(){
     // To be implemented if needed
 }
 
-void on_server_message_notify(server_message_notify_ptr notify){
+void on_server_notify(MOVE event_system_notification_ptr notify){
+    if (notify == nullptr) {
+        return;
+    }
     auto& app = Application::GetInstance();
-    ((SipMqttProtocol*) app.GetProtocol())->OnServerMessageNotify(notify);
+    app.ProcAlertMessage(notify);
+    free(notify);
 }
 
-void on_server_session_update_notify(message_session_event_ptr session_event){
+void on_server_lifecycle_event(MOVE event_device_lifecycle_ptr lifecycle){
+    if (lifecycle == nullptr) {
+        return;
+    }
     auto& app = Application::GetInstance();
-    ((SipMqttProtocol*) app.GetProtocol())->OnServerSessionUpdateNotify(session_event);
+    free(lifecycle);
+}
+
+void on_set_device_mode(MOVE control_device_mode_set_ptr params){
+    if (params == nullptr) {
+        return;
+    }
+    auto& app = Application::GetInstance();
+    std::string mode_str;
+    switch (params->mode)
+    {
+    case EXPLANATION:
+        mode_str = "mode: explanation";
+        break;
+    case INTERACTION:
+        mode_str = "mode: interaction";
+        break;
+    case DUO:
+        mode_str = "mode: duo";
+        break;
+    case HUMAN_AGENT:
+        mode_str = "mode: human_agent";
+        break;
+    default:        
+        mode_str = "mode: unknown";
+        break;
+    }
+    app.ShowUserText(mode_str);
+    free(params);
+}
+
+void on_execute_motion(MOVE control_device_motion_execute_ptr params){
+    if (params == nullptr) {
+        return;
+    }
+    auto& app = Application::GetInstance();
+    std::string motion_str;
+    switch (params->action)
+    {
+    case NOD:
+        motion_str = "motion: nod";
+        break;
+    case SHAKE_HEAD:
+        motion_str = "motion: shake";
+        break;
+    case DANCE:
+        motion_str = "motion: dance";
+        break;
+    case WAVE:
+        motion_str = "motion: wave";
+        break;
+    case EMOTION:
+        motion_str = "motion: emotion";
+        break;
+    case CUSTOM:
+        motion_str = "motion: custom";
+        break;
+    default:
+        motion_str = "motion: unknown";
+        break;
+    }
+    app.ShowUserText(motion_str);
+    free(params);
+    
+}
+
+void on_stop_motion(MOVE control_device_motion_stop_ptr params){
+    if (params == nullptr) {
+        return;
+    }
+    auto& app = Application::GetInstance();
+    app.ShowUserText("motion: stop");
+    free(params);
+}   
+
+void on_server_session_input_text_notify(MOVE data_audio_input_text_ptr audio_input_text){
+    if (audio_input_text == nullptr) {
+        return;
+    }
+    auto& app = Application::GetInstance();
+    app.ShowUserText(audio_input_text->text);
+    free(audio_input_text);
+}
+
+void on_server_session_output_text_notify(MOVE data_audio_output_text_ptr audio_output_text){
+    if (audio_output_text == nullptr) {
+        return;
+    }
+    auto& app = Application::GetInstance();
+    app.StartSpeaking(std::string(audio_output_text->text));
+    app.ShowEmotion(std::string(audio_output_text->emotion));
+    free(audio_output_text);
+}
+
+void on_server_session_update_notify(MOVE control_audio_output_state_ptr session_event){
+    if (session_event == nullptr) {
+        return;
+    }
+    auto& app = Application::GetInstance();
+    if (session_event->state == ON) {
+        app.StartSpeaking("");
+    } else  {
+        LOG_INFO("Stopping speaking as per server notification");
+        app.StopSpeaking();  
+    }
+    free(session_event);
 }
 
 void on_server_mcp_call(const char* message){
@@ -370,6 +480,8 @@ void on_server_mcp_call(const char* message){
     auto& app = Application::GetInstance();
     app.ProcMcpMessage(std::string(message));
 }
+
+
 int adapter_get_audio_volume(){
     return 0;
 }

@@ -3,17 +3,21 @@
 #include "osip_adapter.h"
 #include "osipparser2/osip_list.h"
 #include "string.h"
-/**
- * 用来表示被修饰的指针必须使用malloc申请, 将由函数移动所有权（即函数内部会释放该指针），
- * 调用者在调用后不应再使用该指针。
- */
-#define MOVE
 
-#define ADAPTER_LOG_TAG      "[SESSION]"
-#define LOG_LEVEL_ENABLED    LOG_INFO_LEVEL
+
+#define ADAPTER_LOG_TAG        "[SESSION]"
+#define LOG_LEVEL_ENABLED      LOG_INFO_LEVEL
 #include "adapter.h"
 
 static void send_invite_ack();
+static register_param_t m_register_param = {
+    .online = 1,
+    .battery = 0,
+    .network = {
+        .type = WIFI,
+        .rssi = 0
+    }
+};
 
 static session_state_machine_t m_session_state = {
     .protocol_inited = 0,
@@ -21,6 +25,7 @@ static session_state_machine_t m_session_state = {
     .session_status = SESSION_STATUS_IDLE,
     .seq = 0,
     .last_keepalive_ms = 0,
+    .last_traffic_ms = 0,
     .invite_200_ok_resp_message = NULL,
     .device_ip = {0}
 };
@@ -35,7 +40,8 @@ media_parameter_t g_audio_enc_media_param = {
     .frame_duration = OPUS_FRAME_DURATION_MS,
     .encryption = "aes-128-cbc",
     .nonce = {0},
-    .aes_key = {0}
+    .aes_key = {0},
+    .idle_timeout = 60 // 默认空闲超时时间60秒
 };
 
 media_parameter_t g_audio_dec_media_param = {0};
@@ -68,10 +74,24 @@ void test_print_session_state(){
     );    
 }
 
+void report_traffic_active(){
+    if (check_if_session_in_call()){
+        m_session_state.last_traffic_ms = adapter_get_system_ms();
+    }
+}
 
-static int transmit_sip(char *message){
+void report_register_status(register_param_ptr  param){
+    if (!param) return;
+    m_register_param.battery = param->battery;
+    m_register_param.network = param->network;
+    m_register_param.online = param->online;
+    m_register_param.network.rssi = param->network.rssi;
+    m_register_param.network.type = param->network.type;
+}
+
+static sip_ret_t transmit_sip(char *message){
     if (!message){
-        return -1;
+        return RET_ERROR;
     }
 
     void *root = adapter_create_json_object();
@@ -84,7 +104,7 @@ static int transmit_sip(char *message){
     }
 
     adapter_delete_json_object(root);
-    return 0;
+    return RET_OK;
 }
 
 sip_ret_t transmit_mcp_over_sip(const char *message){
@@ -121,7 +141,7 @@ static void proc_response_register(MOVE received_sip_message_ptr  message){
         m_session_state.last_req_message_ms = 0;
         m_session_state.last_req_message_seq = 0;
     }while(0);
-    //test_print_session_state();
+    test_print_session_state();
     adapter_unlock_sip_mutex();
     free(message);
 
@@ -145,14 +165,14 @@ static int clear_session(){
 
 
 
-static int proc_response_invite(MOVE received_sip_message_ptr message){
+static sip_ret_t proc_response_invite(MOVE received_sip_message_ptr message){
     LOG_INFO("Processing INVITE response");
     adapter_lock_sip_mutex();
-    int ret = 0;
+    int ret = RET_OK;
     do
     {
         if (m_session_state.session_status != SESSION_STATUS_INVITING){
-            ret = -1;
+            ret = RET_ERROR;
             break;
         }
 
@@ -170,7 +190,7 @@ static int proc_response_invite(MOVE received_sip_message_ptr message){
             downlink_sdp_parameter_t sdp = {0};
             if (message->body_length > 0) {
                 // 解析 SDP
-                if (parse_sdp(message->message_body, &sdp) == 0) {
+                if (parse_sdp(message->message_body, &sdp) == RET_OK) {
                     // 这里可以根据解析结果配置音频参数
                     strncpy(g_audio_dec_media_param.ip, sdp.ip, sizeof(g_audio_dec_media_param.ip)-1);
                     g_audio_dec_media_param.port = sdp.port;
@@ -199,10 +219,10 @@ static int proc_response_invite(MOVE received_sip_message_ptr message){
 
             }
         }
-        ret = -1;
+        ret = RET_ERROR;
     } while (0);
 
-    if (ret != 0){
+    if (ret != RET_OK){
         m_session_state.session_status = SESSION_STATUS_IDLE;
         m_session_state.last_req_message_ms = 0;
         m_session_state.last_req_message_seq = 0;
@@ -236,82 +256,54 @@ static void proc_response_bye(MOVE received_sip_message_ptr message){
     return;
 }
 
-static void proc_message(void* parse, server_message_notify_ptr notify){
-
-    char ev[16] = {0};
-    strncpy(ev, adapter_get_json_string_value(parse, "event"), sizeof(ev)-1);
-    char *val = adapter_get_json_string_value(parse, "command");
-    if (val){
-        strncpy(notify->command, val, sizeof(notify->command)-1);
-    }
-    val = adapter_get_json_string_value(parse, "text");
-    if (val){
-        strncpy(notify->message, val, sizeof(notify->message)-1);
-    }
-    val = adapter_get_json_string_value(parse, "emotion");
-    if (val){
-        strncpy(notify->emotion, val, sizeof(notify->emotion)-1);
-    }
-    on_server_message_notify(notify);
-}
-
-static void proc_message_alert(void* data){
-    server_message_notify_t notify = {
-        .event = SERVER_MESSAGE_MSG,
-        .level = MESSAGE_ALERT
-    };
-    proc_message(data, &notify);
-}
-
-static void proc_message_activate(void* data){
-    server_message_notify_t notify = {
-        .event = SERVER_MESSAGE_STATUS,
-        .status = SERVER_STATUS_ACTIVATED
-    };
-    proc_message(data, &notify);
-}
-
-
-static void proc_message_expire(void* data){
-    server_message_notify_t notify = {
-        .event = SERVER_MESSAGE_STATUS,
-        .status = SERVER_STATUS_MEMBERSHIP_INVALID
-    };
-    proc_message(data, &notify);
-}
-
 static void proc_request_message(MOVE received_sip_message_ptr  message){
 
     if (message->body_length > 0) {
         // 解析 JSON
-        void *parse = adapter_parse_json_string(message->message_body);
-        if (parse) {
-            char ev[16] = {0};
-            strncpy(ev, adapter_get_json_string_value(parse, "event"), sizeof(ev)-1);
-            if (strcmp(ev, DEVICE_CTRL_EVENT_ALERT) == 0){
-                proc_message_alert(parse);
-            }else if (strcmp(ev, DEVICE_CTRL_EVENT_ACTIVATE) == 0){
-                proc_message_activate(parse);
-            }else if (strcmp(ev, DEVICE_CTRL_EVENT_EXPIRE) == 0){
-                proc_message_expire(parse);
-            }else {
-                adapter_delete_json_object(parse);
-                free(message);
-                return;
-            }
-            adapter_delete_json_object(parse);
+        void *received_msg = NULL;
+        dcp_cmd_type_t cmd_type = parse_dcp_message(message->message_body, &received_msg);
 
-            char *out_msg = NULL;
-            size_t out_len = 0;
-            int ret = build_200_ok_response(message, &out_msg, &out_len);
-            if (ret != 0 || out_msg == NULL || out_len == 0){
-                free(message);
-                return;
-            }
-            transmit_sip(out_msg);
-            free_sip_message(out_msg);
-            out_msg = NULL;
+        if (cmd_type == INVALID_CMD || received_msg == NULL) {
+            LOG_INFO("Unknown command received in INFO message");
+            free(message);
+            return;
         }
+
+        switch (cmd_type)
+        {
+        case EVENT_SYSTEM_NOTIFICATION:
+            event_system_notification_ptr notification = (event_system_notification_ptr)received_msg;
+            on_server_notify(notification);
+            break;    
+        case EVENT_DEVICE_LIFECYCLE:
+            event_device_lifecycle_ptr lifecycle = (event_device_lifecycle_ptr)received_msg;
+            on_server_lifecycle_event(lifecycle);
+            break;
+        case CONTROL_DEVICE_MODE_SET:
+            control_device_mode_set_ptr mode_set = (control_device_mode_set_ptr)received_msg;   
+            on_set_device_mode(mode_set);
+            break;
+        case CONTROL_DEVICE_MOTION_EXECUTE:
+            control_device_motion_execute_ptr motion_execute = (control_device_motion_execute_ptr)received_msg;   
+            on_execute_motion(motion_execute);
+            break;
+        case CONTROL_DEVICE_MOTION_STOP:
+            control_device_motion_stop_ptr motion_stop = (control_device_motion_stop_ptr)received_msg;   
+            on_stop_motion(motion_stop);
+            break;
+        default:
+            break;
+        }
+        char *out_msg = NULL;
+        size_t out_len = 0;
+        int ret = build_200_ok_response(message, &out_msg, &out_len);
+        if (ret != 0 || out_msg == NULL || out_len == 0){
+            free(message);
+            return;
+        }
+        transmit_sip(out_msg);
+        free_sip_message(out_msg);
+        out_msg = NULL;
     }
     free(message);
     return;
@@ -324,8 +316,6 @@ static void proc_request_bye(MOVE received_sip_message_ptr message){
         free(message);
         return;
     }
-    LOG_INFO("BYE call_id matched: %s", message->call_id);
-    adapter_lock_sip_mutex();
     // 处理 BYE 请求
     m_session_state.session_status = SESSION_STATUS_IDLE;
     LOG_INFO("Processing BYE request from server");
@@ -334,7 +324,7 @@ static void proc_request_bye(MOVE received_sip_message_ptr message){
     char *out_msg = NULL;
     size_t out_len = 0;
     int ret = build_200_ok_response(message, &out_msg, &out_len);
-    if (ret != 0 || out_len == 0){
+    if (ret != 0 || out_msg == NULL || out_len == 0){
         LOG_INFO("failed to response to BYE");
     }else{
         transmit_sip(out_msg);
@@ -367,65 +357,65 @@ static void proc_request_info(MOVE received_sip_message_ptr message){
     adapter_unlock_sip_mutex();
 
     if (message->body_length > 0) {
+
         // 解析 JSON
-        void* parse = adapter_parse_json_string(message->message_body);
-        if (parse) {
-            message_session_event_ptr session_event = malloc(sizeof(message_session_event_t));
-            memset(session_event, 0, sizeof(message_session_event_t));
-            char ev[16] = {0};
-            char* val = adapter_get_json_string_value(parse, "event");
-            if (val){
-                strncpy(ev, val, sizeof(ev)-1);
-            }
-            if (strcmp(ev, DEVICE_CTRL_EVENT_STT) == 0){
-                session_event->event = CTRL_EVENT_USER_TEXT;
-            }else if (strcmp(ev, DEVICE_CTRL_EVENT_SPEAKER) == 0){
-                session_event->event = CTRL_EVENT_SPEAKER;
-            }else {
-                adapter_delete_json_object(parse);
-                free(message);
-                return;
-            }
-            char st[33] = {0};
-            val = adapter_get_json_string_value(parse, "command");
-            if (val){
-                strncpy(st, val, sizeof(st)-1);
-            }
-            if (strcmp(st, WORKING_CMD_START) == 0){
-                session_event->status = WORKING_STATUS_START;
-            }else if (strcmp(st, WORKING_CMD_STOP) == 0){
-                session_event->status = WORKING_STATUS_STOP;
-            }else if (strcmp(st, WORKING_CMD_TEXT) == 0 || strcmp(st, WORKING_CMD_SENTENCE_START) == 0){
-                session_event->status = WORKING_STATUS_TEXT;
-            }else {
-                LOG_INFO("Unknown working command: %s", st);
-                session_event->status = WORKING_STATUS_INVALID;
-            }
-            val = adapter_get_json_string_value(parse, "text");
-            if (val){
-                strncpy(session_event->text, val, sizeof(session_event->text)-1);
-            }
+        void *received_msg = NULL;
+        dcp_cmd_type_t cmd_type = parse_dcp_message(message->message_body, &received_msg);
 
-            val = adapter_get_json_string_value(parse, "emotion");
-            if (val){
-                strncpy(session_event->emotion, val, sizeof(session_event->emotion)-1);
-            }
-            on_server_session_update_notify(session_event);
-            adapter_delete_json_object(parse);
-
-            char *out_msg = NULL;
-            size_t out_len = 0;
-            int ret = build_200_ok_response(message, &out_msg, &out_len);
-            if (ret != 0 || out_msg == NULL || out_len == 0){
-                free(message);
-                return;
-            }
-            transmit_sip(out_msg);
-            free_sip_message(out_msg);
-            out_msg = NULL;
-            free(session_event);
-            session_event = NULL;
+        if (cmd_type == INVALID_CMD || received_msg == NULL) {
+            LOG_INFO("Unknown command received in INFO message");
+            free(message);
+            return;
         }
+
+        switch (cmd_type)
+        {
+        case EVENT_SYSTEM_NOTIFICATION:
+            event_system_notification_ptr notification = (event_system_notification_ptr)received_msg;
+            on_server_notify(notification);
+            break;    
+        case EVENT_DEVICE_LIFECYCLE:
+            event_device_lifecycle_ptr lifecycle = (event_device_lifecycle_ptr)received_msg;
+            on_server_lifecycle_event(lifecycle);
+            break;
+
+        case DATA_AUDIO_INPUT_TEXT:
+            data_audio_input_text_ptr audio_input_text = (data_audio_input_text_ptr)received_msg;
+            on_server_session_input_text_notify(audio_input_text);
+            break;
+        case DATA_AUDIO_OUTPUT_TEXT:
+            data_audio_output_text_ptr audio_output_text = (data_audio_output_text_ptr)received_msg;
+            on_server_session_output_text_notify(audio_output_text);
+            break;
+         case CONTROL_AUDIO_OUTPUT_STATE:
+            control_audio_output_state_ptr audio_output_state = (control_audio_output_state_ptr)received_msg; 
+            on_server_session_update_notify(audio_output_state);  
+            break;
+        case CONTROL_DEVICE_MODE_SET:
+            control_device_mode_set_ptr mode_set = (control_device_mode_set_ptr)received_msg;   
+            on_set_device_mode(mode_set);
+            break;
+        case CONTROL_DEVICE_MOTION_EXECUTE:
+            control_device_motion_execute_ptr motion_execute = (control_device_motion_execute_ptr)received_msg;   
+            on_execute_motion(motion_execute);
+            break;
+        case CONTROL_DEVICE_MOTION_STOP:
+            control_device_motion_stop_ptr motion_stop = (control_device_motion_stop_ptr)received_msg;   
+            on_stop_motion(motion_stop);
+             break;
+        default:
+            break;
+        }
+        char *out_msg = NULL;
+        size_t out_len = 0;
+        int ret = build_200_ok_response(message, &out_msg, &out_len);
+        if (ret != 0 || out_msg == NULL || out_len == 0){
+            free(message);
+            return;
+        }
+        transmit_sip(out_msg);
+        free_sip_message(out_msg);
+        out_msg = NULL;
     }
 
     free(message);
@@ -433,13 +423,16 @@ static void proc_request_info(MOVE received_sip_message_ptr message){
 }
 
 
-void send_register(void *param){
+void send_register(register_param_ptr param){
 
+    if(!param){
+        LOG_INFO("Invalid register parameters");
+        return;
+    }
     LOG_INFO("Sending REGISTER request");
     adapter_lock_sip_mutex();
 
     do{
-
         if (m_session_state.session_status > SESSION_STATUS_REGISTERING){
             break;
         }
@@ -453,12 +446,13 @@ void send_register(void *param){
             .uid = m_session_state.uid,
             .device_ip = m_session_state.device_ip,
             .expires_sec = REGISTER_EXPIRE_SECOND,
-            .cseq_num = (int)(m_session_state.seq)
+            .cseq_num = (int)(m_session_state.seq),
+            .register_param = *param
         };
         char* message = NULL;
         size_t message_len = 0;
-        int ret = build_register(&register_param, &message,  &message_len);
-        if (ret != 0){
+        sip_ret_t ret = build_register(&register_param, &message,  &message_len);
+        if (ret != RET_OK){
             break;
         }
 
@@ -475,14 +469,14 @@ void send_register(void *param){
     return;
 }
 
-int init_call(const char* wake_up_word){
+sip_ret_t init_call(const char* wake_up_word){
     LOG_INFO("Initiating call with wake-up word: %s", wake_up_word ? wake_up_word : "null");
     adapter_lock_sip_mutex();
-    int ret = 0;
+    int ret = RET_OK;
 
     do{
         if (m_session_state.session_status > SESSION_STATUS_INVITING){
-            ret = -1;
+            ret = RET_ERROR;
             break;
         }
 
@@ -497,7 +491,8 @@ int init_call(const char* wake_up_word){
             .support_mcp = SESSION_SUPORT_MCP,
             .cbr = SESSION_OPUS_CBR,
             .frame_gap = SESSION_AUDIO_FRAME_GAP,
-            .wake_up_word = wake_up_word
+            .wake_up_word = wake_up_word,
+            .support_frame_aggregation = SESSION_SUPPORT_FRAME_AGGREGATION
         };
 
         sip_invite_param_t invite = {
@@ -510,7 +505,7 @@ int init_call(const char* wake_up_word){
         char* message = NULL;
         size_t message_len = 0;
         int ret = build_invite(&invite, &message,  &message_len);
-        if (ret != 0){
+        if (ret != RET_OK){
             break;
         }
         m_session_state.session_status = SESSION_STATUS_INVITING;
@@ -527,14 +522,14 @@ int init_call(const char* wake_up_word){
 }
 
 
-int finish_call(){
+sip_ret_t finish_call(){
     LOG_INFO("Finishing call");
     adapter_lock_sip_mutex();
-    int ret = 0;
+    sip_ret_t ret = RET_OK;
     do{
 
         if (m_session_state.session_status != SESSION_STATUS_IN_CALL){
-            ret = -1;
+            ret = RET_ERROR;
             break;
         }
 
@@ -548,7 +543,7 @@ int finish_call(){
                 &message,
                 &message_len
             );
-        if (ret == 0){
+        if (ret == RET_OK){
             m_session_state.seq++;
             transmit_sip(message);
             free_sip_message(message);
@@ -567,17 +562,16 @@ static void send_invite_ack(){
         return;
     }
 
-    int ret = -1;
+    sip_ret_t ret = RET_ERROR;
     char *out_msg = NULL;
     size_t out_len = 0;
 
     ret = build_ack(m_session_state.invite_200_ok_resp_message,
                     m_session_state.uid,
                     m_session_state.device_ip,
-                    m_session_state.seq++,
                     &out_msg,
                     &out_len);
-    if (ret != 0 || !out_msg) {
+    if (ret != RET_OK || !out_msg) {
         goto cleanup;
     }
 
@@ -588,46 +582,38 @@ cleanup:
     return;
 }
 
-static int send_listening_status(const char* cmd, const char* mode){
+sip_ret_t send_abort_speaking(event_session_barge_in_ptr barge_in){
 
-    if(!cmd || (strcmp(cmd, WORKING_CMD_START) != 0 && strcmp(cmd, WORKING_CMD_STOP) != 0)){
-        return -1;
+    if(!barge_in){
+        return RET_ERROR;
     }
-    info_param_t info = {0};
-    strncpy(info.event, "listen", sizeof(info.event)-1);
-    if (cmd && strlen(cmd) > 0){
-        strncpy(info.command, cmd, sizeof(info.command)-1);
-    }
-    if (mode && strlen(mode) > 0){
-        strncpy(info.mode, mode, sizeof(info.mode)-1);
-    }
-
-    LOG_INFO("Sending listening status: command=%s, mode=%s", info.command, info.mode);
+    LOG_INFO("Sending abort speaking: reason=%d", barge_in->reason);
     adapter_lock_sip_mutex();
-    int ret = 0;
+    sip_ret_t ret = RET_OK;
     do{
 
         if (m_session_state.session_status != SESSION_STATUS_IN_CALL){
-            ret = -1;
+            ret = RET_ERROR;
             break;
         }
 
         if (!m_session_state.invite_200_ok_resp_message){
-            ret = -1;
+            ret = RET_ERROR;
             break;
         }
 
         char* message = NULL;
         size_t message_len = 0;
-        int ret = build_listen_info(
+        ret = build_session_barge_in(
             m_session_state.invite_200_ok_resp_message,
             m_session_state.uid,
             m_session_state.device_ip,
             m_session_state.seq,
-            &info,
+            barge_in,
             &message,
             &message_len);
-        if (ret != 0){
+        if (ret != RET_OK){
+            ret = RET_ERROR;
             break;
         }
 
@@ -645,35 +631,36 @@ static int send_listening_status(const char* cmd, const char* mode){
 }
 
 
-void send_abort_speaking(abort_reason_t reason){
+sip_ret_t send_start_listening(listening_mode_t mode){
 
-    info_param_t info = {0};
-    strncpy(info.event, "listen", sizeof(info.event)-1);
-    strncpy(info.command, "interrupt", sizeof(info.command)-1);
-    LOG_INFO("Sending abort speaking: reason=%d", reason);
-    adapter_lock_sip_mutex();
+    event_audio_input_state_start_t param = {
+        .mode = mode
+    };
 
+    LOG_INFO("Sending listening start, mode=%d", mode);
+    sip_ret_t ret = RET_OK;
     do{
-
         if (m_session_state.session_status != SESSION_STATUS_IN_CALL){
+            ret = RET_ERROR;
             break;
         }
 
         if (!m_session_state.invite_200_ok_resp_message){
+            ret = RET_ERROR;
             break;
         }
 
         char* message = NULL;
         size_t message_len = 0;
-        int ret = build_listen_info(
+        ret = build_audio_input_state_start(
             m_session_state.invite_200_ok_resp_message,
             m_session_state.uid,
             m_session_state.device_ip,
             m_session_state.seq,
-            &info,
+            &param,
             &message,
             &message_len);
-        if (ret != 0){
+        if (ret != RET_OK){
             break;
         }
 
@@ -687,38 +674,60 @@ void send_abort_speaking(abort_reason_t reason){
     }while(0);
 
     adapter_unlock_sip_mutex();
-    return;
+    return ret;
 }
 
+sip_ret_t send_stop_listening(audio_input_stop_reason_t reason){
 
-void send_start_listening(listening_mode_t mode){
-    char*mode_str = NULL;
-    switch(mode){
-        case LISTENING_MODE_AUTO_STOP:
-            mode_str = "auto";
+    event_audio_input_state_stop_t param = {reason};
+    LOG_INFO("Sending listening stop");
+    sip_ret_t ret = RET_OK;
+    do{
+
+        if (m_session_state.session_status != SESSION_STATUS_IN_CALL){
+            ret = RET_ERROR;
             break;
-        case LISTENING_MODE_REALTIME:
-            mode_str = "realtime";
+        }
+
+        if (!m_session_state.invite_200_ok_resp_message){
+            ret = RET_ERROR;
             break;
-        default:
-            mode_str = "manual";
+        }
+
+        char* message = NULL;
+        size_t message_len = 0;
+        ret = build_audio_input_state_stop(
+            m_session_state.invite_200_ok_resp_message,
+            m_session_state.uid,
+            m_session_state.device_ip,
+            m_session_state.seq,
+            &param,
+            &message,
+            &message_len);
+        if (ret != RET_OK){
             break;
-    }
-    send_listening_status(WORKING_CMD_START, mode_str);
+        }
+
+        uint32_t ms = adapter_get_system_ms();
+        m_session_state.last_req_message_ms = ms;
+        m_session_state.last_req_message_seq = m_session_state.seq;
+        m_session_state.seq++;
+        transmit_sip(message);
+        free_sip_message(message);
+
+    }while(0);
+
+    adapter_unlock_sip_mutex();
+    return ret;
 }
-
-void send_stop_listening(){
-    send_listening_status(WORKING_CMD_STOP, NULL);
-}
-
 
 
 void handle_received_sip(const char *data, size_t len)
 {
     received_sip_message_ptr msg_info = NULL;
-    int result = sip_parse_incoming_message(data, len, &msg_info);
+    sip_ret_t result = sip_parse_incoming_message(data, len, &msg_info);
 
-    if(result == 0){
+    if(result == RET_OK && msg_info != NULL){
         if (!is_response_message(msg_info)) {
             // 设备只会收到如下几种服务器下发的
             if (strcmp(msg_info->method, "MESSAGE") == 0) {
@@ -803,7 +812,6 @@ void session_checking(void *param){
         return;
     }
 
-    LOG_INFO("Session checking...");
     adapter_lock_sip_mutex();
     uint32_t ms = adapter_get_system_ms();
 
@@ -822,6 +830,13 @@ void session_checking(void *param){
             m_session_state.last_req_message_seq = 0;
 
             on_call_ack_error(CALL_ERROR_SERVER_NO_ANSWER);
+        }
+    }else
+    if (m_session_state.session_status == SESSION_STATUS_IN_CALL){
+        if ((m_session_state.last_traffic_ms + g_audio_enc_media_param.idle_timeout * 1000) <= ms){
+            LOG_INFO("No traffic for %d seconds, assuming call dropped", g_audio_enc_media_param.idle_timeout);
+            finish_call();
+            on_call_terminated_by_server();
         }
     }else
     if (m_session_state.session_status == SESSION_STATUS_TERMINATING){
@@ -868,11 +883,14 @@ void mqtt_proc_task(void *param){
                 }
                 adapter_delete_json_object(root);
                 root = NULL;
-
             }
             free(msg);
         }
     }
+}
+
+void proc_register_task(void *param){
+    send_register(&m_register_param);
 }
 
 void init_session_module(const char* uid, const char* device_ip){
@@ -892,9 +910,9 @@ void init_session_module(const char* uid, const char* device_ip){
     osip_list_init(&m_received_sip_list);
     adapter_start_thread(mqtt_proc_task, "mqtt_proc_task", 1024*8, 16);
 #else
-    send_register(NULL);
+    send_register(&m_register_param);
 #endif
 
-    adapter_start_periodic_task(session_checking, 50 * 1000, 1024*8, NULL);
-    adapter_start_periodic_task(send_register, 60 * 1000, 1024*8, NULL);
+    adapter_start_periodic_task(session_checking, 1000, 1024*8, NULL);
+    adapter_start_periodic_task(proc_register_task, 60 * 1000, 1024*8, NULL);
 }

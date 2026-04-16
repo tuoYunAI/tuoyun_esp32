@@ -4,7 +4,7 @@
 #include "osip_adapter.h"
 #include "string.h"
 
-#define ADAPTER_LOG_TAG    "[OSIP-ADAPTER]"
+#define ADAPTER_LOG_TAG    "[SIP-ADAPTER]"
 #define LOG_LEVEL_ENABLED  LOG_INFO_LEVEL
 #include "adapter.h"
 
@@ -221,6 +221,74 @@ static inline void sip_generate_tag(char *out,
 }
 
 /**
+ * 组装DCP协议的主消息体
+ * {
+    "version": "2.1",
+    "type": "event",
+    "name": "audio.input.state",
+    "id": "evt-1002",
+    "timestamp": 1712141232000,
+    "params": {
+       ...
+    }
+}
+ */
+
+static long evt_id_counter = 0;
+static long gen_evt_id(){
+    return ++evt_id_counter;
+}  
+static long ctrl_id_counter = 0;
+static long gen_ctrl_id(){  
+    return ++ctrl_id_counter;
+}
+static long data_id_counter = 0;
+static long gen_data_id(){
+    return ++data_id_counter;
+}
+
+/**
+ * DCP基本消息结构生成函数，生成包含 version、type、name、id、timestamp 等基础字段的 JSON 对象
+ */
+void* build_dcp_base_msg(dcp_cmd_type_t type){
+    
+    char* name = NULL;
+    char* type_str = NULL;
+    char id[128] = {0};
+    switch (type)
+    {
+    case EVENT_REGISTER:
+        name = DCP_REGISTER;
+        type_str = "event";
+        sprintf(id, "%s%ld", EVENT_MSG_NAME_TAG,  gen_evt_id());
+        break;
+    case EVENT_AUDIO_INPUT_STATE:
+        type_str = "event";
+        name = DCP_AUDIO_INPUT_STATE;
+        sprintf(id, "%s%ld", EVENT_MSG_NAME_TAG,  gen_evt_id());
+        break;
+    case EVENT_SESSION_BARGE_IN:
+        name = DCP_SESSION_BARGE_IN;
+        type_str = "event";
+        sprintf(id, "%s%ld", EVENT_MSG_NAME_TAG,  gen_evt_id());
+        break;
+    default:
+        break;
+    }
+    if (!name || !type_str){
+        LOG_INFO("Unsupported message type: %d", type);
+        return NULL;
+    }
+
+    void *root = adapter_create_json_object();
+    adapter_put_json_string_value(root, "version", DCP_VERSION);
+    adapter_put_json_string_value(root, "type", type_str);
+    adapter_put_json_string_value(root, "name", name);
+    adapter_put_json_string_value(root, "id", id);
+    adapter_put_json_object_value(root, "timestamp", adapter_json_object_new_int(adapter_get_system_ms()));
+    return root;
+}
+/**
  * 组装一个 SIP REGISTER 报文并输出为字符串。
  * 参数：
  *    param:    注册参数结构体指针
@@ -232,9 +300,9 @@ static inline void sip_generate_tag(char *out,
  * 返回：0 成功，非0失败
  * 
  */
-int build_register(sip_register_param_ptr param, char **out_msg, size_t *out_len)
+sip_ret_t build_register(sip_register_param_ptr param, char **out_msg, size_t *out_len)
 {
-    if (!param || !param->uid || !param->device_ip || !out_msg || !out_len) return -1;
+    if (!param || !param->uid || !param->device_ip || !out_msg || !out_len) return RET_ERROR;
 
     osip_message_t *msg = NULL;
     char buf[256];
@@ -300,66 +368,141 @@ int build_register(sip_register_param_ptr param, char **out_msg, size_t *out_len
     // User-Agent: AI-Toy/1.0
     CHECK_RET(osip_message_set_header(msg, "User-Agent", USER_AGENT));
 
-    // Content-Length: 0
-    CHECK_RET(osip_message_set_content_length(msg, osip_strdup("0")));
+// Content-Type: application/sdp
+    CHECK_RET(osip_message_set_header(msg, "Content-Type", "application/json"));
 
+    // Content-Length：与实际 body 长度保持一致（无 body 时为 0）
+    {
+        void *root = build_dcp_base_msg(EVENT_REGISTER);
+        void *params = adapter_create_json_object();
+        adapter_put_json_object_value(params, "online", adapter_json_object_new_boolean(param->register_param.online));
+        adapter_put_json_object_value(params, "battery", adapter_json_object_new_int(param->register_param.battery));
+        void *network = adapter_create_json_object();
+        char* type = NULL;
+        switch (param->register_param.network.type){
+        case WIFI:
+            type = "wifi";
+            break;
+        case MOBILE_4G:
+            type = "4g";
+            break;
+        case ETHERNET:
+            type = "ethernet";
+            break;
+        default:
+            type = "unknown";
+            break;  
+        }
+        adapter_put_json_string_value(network, "type", type);
+        adapter_put_json_object_value(network, "rssi", adapter_json_object_new_int(param->register_param.network.rssi));
+        adapter_put_json_object_value(params, "network", network);
+        adapter_put_json_object_value(root, "params", params);
+        const char* json_string = adapter_serialize_json_to_string(root);
+        CHECK_RET(osip_message_set_body(msg, json_string, strlen(json_string)));
+        adapter_delete_json_object(root);
+
+
+        int body_len = 0;
+        if (!osip_list_eol(&msg->bodies, 0)) {
+            osip_body_t *body = (osip_body_t *)osip_list_get(&msg->bodies, 0);
+            if (body && body->length > 0) {
+                body_len = (int)body->length;
+            }
+        }
+        char clen[32]={0};
+        snprintf(clen, sizeof(clen) - 1, "%d", body_len);
+        CHECK_RET(osip_message_set_content_length(msg, osip_strdup(clen)));
+    }
+    
     // 序列化为最终字符串
     CHECK_RET(osip_message_to_str(msg, out_msg, out_len));
     osip_message_free(msg);
-    return 0;
+    return RET_OK;
 
 fail:
     if (msg) osip_message_free(msg);
-    return -1;
+    return RET_ERROR;
 }
 
 
-static int make_sdp(uplink_sdp_parameter_ptr param, char *dst, size_t dst_sz)
+static sip_ret_t make_sdp(uplink_sdp_parameter_ptr param, char *dst, size_t dst_sz)
 {
-    if (!dst || dst_sz == 0 || !param || !param->uid || !param->device_ip || !param->codec) return -1;
+    if (!dst || dst_sz == 0 || !param || !param->uid || !param->device_ip || !param->codec) return RET_ERROR;
 
     uint32_t version = (uint32_t)adapter_get_system_ms();
     char call_id[36] = {0};
     sprintf(call_id, "%ld@%s", version, param->device_ip);  
+    char wake_word_part[64] = {0};
+    if (param->wake_up_word && param->wake_up_word[0] != '\0') {
+        snprintf(wake_word_part, sizeof(wake_word_part), ",wake_up_word=%s", param->wake_up_word);
+    }
     int n = snprintf(dst, dst_sz,
         "v=0\r\n"
-        "o=%s %s %ld IN IP4 %s\r\n"
+        "o=%s %s %ld IN IP4 0.0.0.0\r\n"
         "s=AI-Session\r\n"
-        "c=IN IP4 %s\r\n"
+        "c=IN IP4 0.0.0.0\r\n"
         "t=0 0\r\n"
-        "m=audio 6000 UDP/AI-AUDIO\r\n"
-        "a=x-transport:udp\r\n"
-        "a=x-codec:%s\r\n"
-        "a=x-sample_rate:%d\r\n"
-        "a=x-channels:%d\r\n"
-        "a=x-frame_duration:%d\r\n"
-        "a=x-support_cbr:%d\r\n"
-        "a=x-support_frame_gap:%d\r\n"
-        "a=x-mcp:%d\r\n",
-        param->uid, call_id, version, param->device_ip, 
-        param->device_ip, 
-        param->codec, 
-        param->sample_rate, 
-        param->channels, 
-        param->frame_duration_ms,
-        param->cbr, 
-        param->frame_gap,
-        param->support_mcp ? 1 : 0
+        "m=audio 0 UDP/AI-AUDIO\r\n"
+        "a=lovaiot-uplink:codec=%s,frame=%d,sample_rate=%d,channels=%d,mcp=%d%s\r\n"
+        "a=lovaiot-downlink:cbr=%d,frame_gap=%d,aggregation=%d,redundant=%d\r\n",
+        param->uid, call_id, version, 
+        param->codec, param->frame_duration_ms, param->sample_rate, param->channels, param->support_mcp ? 1 : 0, wake_word_part,
+        param->cbr ? 1 : 0, param->frame_gap, param->support_frame_aggregation ? 1 : 0, param->support_redundant ? 1 : 0    
     );
-    if(param->wake_up_word && param->wake_up_word[0] != '\0'){
-        int m = snprintf(dst + n, (n < (int)dst_sz) ? (dst_sz - n) : 0,
-            "a=x-wake_up_word:%s\r\n", param->wake_up_word
-        );
-        if (m > 0 && (size_t)m < (dst_sz - n)){
-            n += m;
-        }
-    }
-    return (n > 0 && (size_t)n < dst_sz) ? 0 : -1;
+    return (n > 0 && (size_t)n < dst_sz) ? RET_OK : RET_ERROR;
 }
 
-int parse_sdp(const char *sdp_buf, downlink_sdp_parameter_ptr param)
+static void parse_downlink_attribute_value(const char *value, downlink_sdp_parameter_ptr param)
 {
-    if (!sdp_buf || !param) return -1;
+    if (!value || !param) {
+        return;
+    }
+
+    char attr_buf[512] = {0};
+    strncpy(attr_buf, value, sizeof(attr_buf) - 1);
+
+    char *cursor = attr_buf;
+    while (cursor && *cursor != '\0') {
+        char *segment = cursor;
+        char *comma = strchr(cursor, ',');
+        if (comma) {
+            *comma = '\0';
+            cursor = comma + 1;
+        } else {
+            cursor = NULL;
+        }
+
+        char *eq = strchr(segment, '=');
+        if (!eq) {
+            continue;
+        }
+        *eq = '\0';
+
+        char *key = segment;
+        char *val = eq + 1;
+        if (osip_strcasecmp(key, "codec") == 0) {
+            strncpy(param->codec, val, sizeof(param->codec) - 1);
+            param->codec[sizeof(param->codec) - 1] = '\0';
+        } else if (osip_strcasecmp(key, "frame") == 0) {
+            param->frame_duration = atoi(val);
+        } else if (osip_strcasecmp(key, "sample_rate") == 0) {
+            param->sample_rate = atoi(val);
+        } else if (osip_strcasecmp(key, "channels") == 0) {
+            param->channels = atoi(val);
+        } else if (osip_strcasecmp(key, "encryption") == 0) {
+            strncpy(param->encryption, val, sizeof(param->encryption) - 1);
+            param->encryption[sizeof(param->encryption) - 1] = '\0';
+        } else if (osip_strcasecmp(key, "key") == 0) {
+            hex_string_to_array(val, param->aes_key, sizeof(param->aes_key));
+        } else if (osip_strcasecmp(key, "nonce") == 0) {
+            hex_string_to_array(val, param->nonce, sizeof(param->nonce));
+        }
+    }
+}
+
+sip_ret_t parse_sdp(const char *sdp_buf, downlink_sdp_parameter_ptr param)
+{
+    if (!sdp_buf || !param) return RET_ERROR;
 
     sdp_message_t *sdp = NULL;
     CHECK_RET(sdp_message_init(&sdp));
@@ -378,77 +521,47 @@ int parse_sdp(const char *sdp_buf, downlink_sdp_parameter_ptr param)
         char *media = sdp_message_m_media_get(sdp, m);
         if (!media) break;
         const char *port = sdp_message_m_port_get(sdp, m);
+        const char *proto = sdp_message_m_proto_get(sdp, m);
         if (port){
             param->port = atoi(port);
         }
+        if (proto && proto[0] != '\0') {
+            if (osip_strncasecmp(proto, "UDP", 3) == 0) {
+                strncpy(param->transport, "udp", sizeof(param->transport) - 1);
+            } else if (osip_strncasecmp(proto, "TCP", 3) == 0) {
+                strncpy(param->transport, "tcp", sizeof(param->transport) - 1);
+            } else {
+                strncpy(param->transport, proto, sizeof(param->transport) - 1);
+            }
+            param->transport[sizeof(param->transport) - 1] = '\0';
+        }
 
-        char *x_transport = NULL;
-        char *codec = NULL;
-        char *sample_rate = NULL;
-        char *channels = NULL;
-        char *frame_duration = NULL;
-        char *encryption = NULL;
-        char *key = NULL;
-        char *nonce = NULL;
         for (int ai = 0; ; ++ai) {
             char *af = sdp_message_a_att_field_get(sdp, m, ai);
             if (!af) break;
 
             char *av = sdp_message_a_att_value_get(sdp, m, ai);
-            if (av) {
-                if (!x_transport && osip_strcasecmp(af, "x-transport") == 0) x_transport = av;
-                else if (!codec && osip_strcasecmp(af, "x-codec") == 0) codec = av;
-                else if (!sample_rate && osip_strcasecmp(af, "x-sample_rate") == 0) sample_rate = av;
-                else if (!channels && osip_strcasecmp(af, "x-channels") == 0) channels = av;
-                else if (!frame_duration && osip_strcasecmp(af, "x-frame_duration") == 0) frame_duration = av;
-                else if (!encryption && osip_strcasecmp(af, "x-encryption") == 0) encryption = av;
-                else if (!key && osip_strcasecmp(af, "x-key") == 0) key = av;
-                else if (!nonce && osip_strcasecmp(af, "x-nonce") == 0) nonce = av;
+            if (av && osip_strcasecmp(af, "lovaiot-downlink") == 0) {
+                parse_downlink_attribute_value(av, param);
+                break;
             }
-        }
-        if (codec){
-            strncpy(param->codec, codec, sizeof(param->codec) - 1);
-            param->codec[sizeof(param->codec) - 1] = '\0';
-        }
-        if (x_transport){
-            strncpy(param->transport, x_transport, sizeof(param->transport) - 1);
-            param->transport[sizeof(param->transport) - 1] = '\0';
-        }
-        if (sample_rate){
-            param->sample_rate = atoi(sample_rate);
-        }
-        if (channels){
-            param->channels = atoi(channels);
-        }
-        if (frame_duration){
-            param->frame_duration = atoi(frame_duration);
-        }
-        if (encryption){
-            strncpy(param->encryption, encryption, sizeof(param->encryption) - 1);
-            param->encryption[sizeof(param->encryption) - 1] = '\0';
-        }
-        if (key){
-            hex_string_to_array(key, param->aes_key, sizeof(param->aes_key));
-        }
-        if (nonce){
-            hex_string_to_array(nonce, param->nonce, sizeof(param->nonce));
         }
         
         break; // 仅处理第一个媒体
     }
 
     sdp_message_free(sdp);
-    return 0;
+    return RET_OK;
 
 fail:
     if (sdp) sdp_message_free(sdp);
-    return -1;    
+    return RET_ERROR;    
 }
 
 
-int build_invite(sip_invite_param_ptr param, char **out_msg, size_t *out_len)
+sip_ret_t build_invite(sip_invite_param_ptr param, char **out_msg, size_t *out_len)
 {
-    if (!param || !param->uid || !param->device_ip || !out_msg || !out_len) return -1;
+    if (!param || !param->uid || !param->device_ip || !out_msg || !out_len) return RET_ERROR;
 
     osip_message_t *msg = NULL;
     char buf[350];
@@ -535,11 +648,11 @@ int build_invite(sip_invite_param_ptr param, char **out_msg, size_t *out_len)
     // 序列化为最终字符串
     CHECK_RET(osip_message_to_str(msg, out_msg, out_len));
     osip_message_free(msg);
-    return 0;
+    return RET_OK;
 
 fail:
     if (msg) osip_message_free(msg);
-    return -1;
+    return RET_ERROR;
 }
 
 /** 
@@ -562,7 +675,7 @@ fail:
 *   out_len:         报文长度
 * 返回：0 成功，非0失败
 **/
-static int build_response(int status_code,
+static sip_ret_t build_response(int status_code,
                    const char *reason_phrase,
                    const char *via_header,
                    const char *from_header,
@@ -579,7 +692,7 @@ static int build_response(int status_code,
 {
     if (!reason_phrase || !via_header || !from_header || !to_header || 
         !call_id || !cseq_header || !out_msg || !out_len) {
-        return -1;
+        return RET_ERROR;
     }
 
     osip_message_t *resp = NULL;
@@ -651,18 +764,18 @@ static int build_response(int status_code,
     // 序列化为最终字符串
     CHECK_RET(osip_message_to_str(resp, out_msg, out_len));
     osip_message_free(resp);
-    return 0;
+    return RET_OK;
 
 fail:
     if (resp) osip_message_free(resp);
-    return -1;
+    return RET_ERROR;
 }
 
 // 便捷函数：构建简单的 200 OK 响应（无消息体）
-int build_200_ok_response(received_sip_message_ptr request, char **out_msg, size_t *out_len)
+sip_ret_t build_200_ok_response(received_sip_message_ptr request, char **out_msg, size_t *out_len)
 {
     if (!request || !out_msg || !out_len){
-        return -1;
+        return RET_ERROR;
     }
 
     return build_response(200, "OK", request->via_header, request->from_header, request->to_header, NULL,
@@ -673,10 +786,10 @@ int build_200_ok_response(received_sip_message_ptr request, char **out_msg, size
 
 
 
-int build_ack(received_sip_message_ptr response, const char *uid, const char *device_ip, int cseq_num, char **out_msg, size_t *out_len)
+sip_ret_t build_ack(received_sip_message_ptr response, const char *uid, const char *device_ip, char **out_msg, size_t *out_len)
 {
     if (!response || !uid || !device_ip || !out_msg || !out_len) {
-        return -1;
+        return RET_ERROR;
     }
 
     osip_message_t *ack = NULL;
@@ -722,7 +835,7 @@ int build_ack(received_sip_message_ptr response, const char *uid, const char *de
 
     // CSeq: 使用原来的序列号，但方法改为 ACK
     CHECK_RET(osip_cseq_init(&ack->cseq));
-    snprintf(buf, sizeof(buf), "%d ACK", cseq_num);
+    snprintf(buf, sizeof(buf), "%d ACK", response->cseq_num);
     CHECK_RET(osip_cseq_parse(ack->cseq, buf));
 
     // Contact: <sip:{uid}@{device-ip}>
@@ -741,38 +854,20 @@ int build_ack(received_sip_message_ptr response, const char *uid, const char *de
     // 序列化为最终字符串
     CHECK_RET(osip_message_to_str(ack, out_msg, out_len));
     osip_message_free(ack);
-    return 0;
+    return RET_OK;
 
 fail:
     if (ack) osip_message_free(ack);
-    return -1;
+    return RET_ERROR;
 }
 
 
-// 参数：
-//   uid:           例如 "device-uid-123"
-//   device_ip:     例如 "192.168.1.100"
-//   cseq_num:      例如 6
-// 输出：
-//   out_msg:       指向已分配的完整报文字符串（用 osip_free 释放）
-//   out_len:       报文长度
-// 返回：0 成功，非0失败
-int build_listen_info(
-               received_sip_message_ptr response,
+static osip_message_t* build_info(received_sip_message_ptr response,
                const char *uid,
                const char *device_ip,
-               int cseq_num,
-               info_param_ptr info,
-               char **out_msg,
-               size_t *out_len)
-{
-    if (!response || !uid || !device_ip || !info || !out_msg || !out_len) {
-        return -1;
-    }
-
+               int cseq_num){
     osip_message_t *msg = NULL;
     char buf[512];
-
     CHECK_RET(osip_message_init(&msg));
 
     // 请求行：INFO sip:server@server.lovaiot.com SIP/2.0
@@ -817,16 +912,48 @@ int build_listen_info(
     // Content-Type: application/json
     CHECK_RET(osip_message_set_header(msg, "Content-Type", "application/json"));
 
-    // Body: JSON 内容
-    void *root = adapter_create_json_object();
-    adapter_put_json_string_value(root, "event", info->event);
+    return msg;
+fail:
+    if (msg) osip_message_free(msg);
+    return NULL;
+}
 
-    if (strlen(info->command) > 0){
-        adapter_put_json_string_value(root, "command", info->command);
+
+sip_ret_t build_audio_input_state_start(
+               received_sip_message_ptr response,
+               const char *uid,
+               const char *device_ip,
+               int cseq_num,
+               event_audio_input_state_start_ptr param,
+               char **out_msg,
+               size_t *out_len)
+{
+    if (!response || !uid || !device_ip || !param || !out_msg || !out_len) {
+        return RET_ERROR;
     }
-    if (strlen(info->mode) > 0){
-        adapter_put_json_string_value(root, "mode", info->mode);
+
+    osip_message_t *msg = build_info(response, uid, device_ip, cseq_num);
+
+    // Body: JSON 内容
+    void *root = build_dcp_base_msg(EVENT_AUDIO_INPUT_STATE);
+    void* params = adapter_create_json_object();
+    adapter_put_json_object_value(root, "params", params);
+    adapter_put_json_string_value(params, "state", "on");
+
+    char mode_str[16] = {0};
+    switch(param->mode){
+        case LISTENING_MODE_AUTO_STOP:
+            strncpy(mode_str, "auto", sizeof(mode_str)-1);
+            break;
+        case LISTENING_MODE_REALTIME:
+            strncpy(mode_str, "realtime", sizeof(mode_str)-1);
+            break;
+        default:
+            strncpy(mode_str, "manual", sizeof(mode_str)-1);
+            break;
     }
+    adapter_put_json_string_value(params, "mode", mode_str);
+    
     
     char* json_string = adapter_serialize_json_to_string(root);
     if (!json_string) {
@@ -838,6 +965,7 @@ int build_listen_info(
     CHECK_RET(osip_message_set_body(msg, json_string, (size_t)json_len));
 
     // Content-Length: 自动计算设置
+    char buf[64] = {0};
     snprintf(buf, sizeof(buf), "%d", json_len);
     CHECK_RET(osip_message_set_content_length(msg, buf));
 
@@ -845,19 +973,131 @@ int build_listen_info(
     CHECK_RET(osip_message_to_str(msg, out_msg, out_len));
     osip_message_free(msg);
     adapter_delete_json_object(root);
-    return 0;
+    return RET_OK;
 
 fail:
     if (msg) osip_message_free(msg);
-    return -1;
+    return RET_ERROR;
 }
 
 
-int build_bye(received_sip_message_ptr invite, char* uid, char* device_ip, int cseq_num, char** out_msg, size_t* out_len){
+sip_ret_t build_audio_input_state_stop(
+               received_sip_message_ptr response,
+               const char *uid,
+               const char *device_ip,
+               int cseq_num,
+               event_audio_input_state_stop_ptr param,
+               char **out_msg,
+               size_t *out_len)
+{
+    if (!response || !uid || !device_ip || !param || !out_msg || !out_len) {
+        return RET_ERROR;
+    }
+
+    osip_message_t *msg = build_info(response, uid, device_ip, cseq_num);
+    // Body: JSON 内容
+    void *root = build_dcp_base_msg(EVENT_AUDIO_INPUT_STATE);
+    void* params = adapter_create_json_object();
+    adapter_put_json_object_value(root, "params", params);
+    adapter_put_json_string_value(params, "state", "off");
+    if (param->reason == AUDIO_INPUT_STOP_REASON_VAD) {
+        adapter_put_json_string_value(params, "reason", "vad");
+    } else if (param->reason == AUDIO_INPUT_STOP_REASON_MANUAL) {
+        adapter_put_json_string_value(params, "reason", "manual");
+    } else if (param->reason == AUDIO_INPUT_STOP_REASON_ERROR) {
+        adapter_put_json_string_value(params, "reason", "error");
+    } else {
+        adapter_put_json_string_value(params, "reason", "unknown");
+    }
+    
+    
+    char* json_string = adapter_serialize_json_to_string(root);
+    if (!json_string) {
+        adapter_delete_json_object(root);
+        goto fail;
+    }
+
+    int json_len = (int)strlen(json_string);
+    CHECK_RET(osip_message_set_body(msg, json_string, (size_t)json_len));
+
+    // Content-Length: 自动计算设置
+    char buf[64] = {0};
+    snprintf(buf, sizeof(buf), "%d", json_len);
+    CHECK_RET(osip_message_set_content_length(msg, buf));
+
+    // 序列化为最终字符串
+    CHECK_RET(osip_message_to_str(msg, out_msg, out_len));
+    osip_message_free(msg);
+    adapter_delete_json_object(root);
+    return RET_OK;
+
+fail:
+    if (msg) osip_message_free(msg);
+    return RET_ERROR;
+}
+
+
+sip_ret_t build_session_barge_in(
+               received_sip_message_ptr response,
+               const char *uid,
+               const char *device_ip,
+               int cseq_num,
+               event_session_barge_in_ptr param,
+               char **out_msg,
+               size_t *out_len){
+
+    if (!response || !uid || !device_ip || !param || !out_msg || !out_len) {
+        return RET_ERROR;
+    }
+
+    osip_message_t *msg = build_info(response, uid, device_ip, cseq_num);
+    // Body: JSON 内容
+    void *root = build_dcp_base_msg(EVENT_SESSION_BARGE_IN);
+    void* params = adapter_create_json_object();
+    adapter_put_json_object_value(root, "params", params);
+    adapter_put_json_string_value(params, "state", "off");
+    if (param->text[0] != '\0') {
+        adapter_put_json_string_value(params, "text", param->text);
+    } 
+
+    if (param->reason == BARGE_IN_REASON_WAKE_WORD_DETECTED) {
+        adapter_put_json_string_value(params, "reason", "user_speech");
+    } else  {
+        adapter_put_json_string_value(params, "reason", "none");
+    } 
+    
+    
+    char* json_string = adapter_serialize_json_to_string(root);
+    if (!json_string) {
+        adapter_delete_json_object(root);
+        goto fail;
+    }
+
+    int json_len = (int)strlen(json_string);
+    CHECK_RET(osip_message_set_body(msg, json_string, (size_t)json_len));
+
+    // Content-Length: 自动计算设置
+    char buf[64] = {0};
+    snprintf(buf, sizeof(buf), "%d", json_len);
+    CHECK_RET(osip_message_set_content_length(msg, buf));
+
+    // 序列化为最终字符串
+    CHECK_RET(osip_message_to_str(msg, out_msg, out_len));
+    osip_message_free(msg);
+    adapter_delete_json_object(root);
+    return RET_OK;
+
+fail:
+    if (msg) osip_message_free(msg);
+    return RET_ERROR;   
+
+}
+
+sip_ret_t build_bye(received_sip_message_ptr invite, char* uid, char* device_ip, int cseq_num, char** out_msg, size_t* out_len){
 
     if (!invite || !uid || !device_ip || !out_msg || !out_len) return -1;
 
-    int ret = -1;
+    int ret = RET_ERROR;
     osip_message_t *bye = NULL;
 
     char req_uri_str[128] = {0};
@@ -936,16 +1176,296 @@ int build_bye(received_sip_message_ptr invite, char* uid, char* device_ip, int c
     CHECK_RET(osip_message_to_str(bye, out_msg, out_len));
     osip_message_free(bye);
     bye = NULL;
-    ret = 0;
+    ret = RET_OK;
 
 cleanup:
     if (bye) osip_message_free(bye);
     return ret;
 
 fail:
-    ret = -1;
+    ret = RET_ERROR;
     goto cleanup;
 }
+
+
+static void *alloc_zeroed(size_t size)
+{
+    void *ptr = malloc(size);
+    if (ptr) {
+        memset(ptr, 0, size);
+    }
+    return ptr;
+}
+
+static system_notification_level_t parse_system_notification_level_value(const char *level)
+{
+    if (!level || level[0] == '\0') {
+        return _INFO_;
+    }
+    if (strcmp(level, "warning") == 0) {
+        return _WARNING_;
+    }
+    if (strcmp(level, "critical") == 0) {
+        return _CRITICAL_;
+    }
+    return _INFO_;
+}
+
+static subscription_status_t parse_subscription_status_value(const char *status)
+{
+    if (!status || status[0] == '\0') {
+        return ACTIVE;
+    }
+    if (strcmp(status, "expired") == 0) {
+        return EXIPIRED;
+    }
+    if (strcmp(status, "trial") == 0) {
+        return TRIAL;
+    }
+    if (strcmp(status, "blocked") == 0) {
+        return BLOCKED;
+    }
+    return ACTIVE;
+}
+
+static device_working_mode_t parse_device_mode_value(const char *mode)
+{
+    if (!mode || mode[0] == '\0') {
+        return EXPLANATION;
+    }
+    if (strcmp(mode, "interaction") == 0) {
+        return INTERACTION;
+    }
+    if (strcmp(mode, "duo") == 0) {
+        return DUO;
+    }
+    if (strcmp(mode, "human_agent") == 0) {
+        return HUMAN_AGENT;
+    }
+    return EXPLANATION;
+}
+
+static device_motion_t parse_device_motion_value(const char *action)
+{
+    if (!action || action[0] == '\0') {
+        return IDLE;
+    }
+    if (strcmp(action, "nod") == 0) {
+        return NOD;
+    }
+    if (strcmp(action, "shake_head") == 0) {
+        return SHAKE_HEAD;
+    }
+    if (strcmp(action, "dance") == 0) {
+        return DANCE;
+    }
+    if (strcmp(action, "wave") == 0) {
+        return WAVE;
+    }
+    if (strcmp(action, "emotion") == 0) {
+        return EMOTION;
+    }
+    if (strcmp(action, "custom") == 0) {
+        return CUSTOM;
+    }
+    if (strcmp(action, "idle") == 0) {
+        return IDLE;
+    }
+    return IDLE;
+}
+
+static device_motion_priority_t parse_device_motion_priority_value(const char *priority)
+{
+    if (!priority || priority[0] == '\0') {
+        return _NORMAL_;
+    }
+    if (strcmp(priority, "low") == 0) {
+        return _LOW_;
+    }
+    if (strcmp(priority, "high") == 0) {
+        return _HIGH_;
+    }
+    if (strcmp(priority, "interrupt") == 0) {
+        return _INTERRUPT_;
+    }
+    return _NORMAL_;
+}
+
+static device_motion_stop_scope_t parse_device_motion_stop_scope_value(const char *scope)
+{
+    if (!scope || scope[0] == '\0') {
+        return ALL;
+    }
+    if (strcmp(scope, "current") == 0) {
+        return CURRENT;
+    }
+    if (strcmp(scope, "type") == 0) {
+        return TYPE;
+    }
+    return ALL;
+}
+
+static float parse_float_value(void *obj, const char *key, float default_value)
+{
+    const char *value = adapter_get_json_string_value(obj, key);
+    if (!value || value[0] == '\0') {
+        return default_value;
+    }
+
+    char *end = NULL;
+    float parsed = strtof(value, &end);
+    if (end == value) {
+        return default_value;
+    }
+    return parsed;
+}
+
+
+dcp_cmd_type_t parse_dcp_message(char* data, void** out_param){
+    dcp_cmd_type_t cmd_type = INVALID_CMD;
+    void *parse = NULL;
+    void *params = NULL;
+    const char *name = NULL;
+
+    if (!data || data[0] == '\0' || !out_param) {
+        return INVALID_CMD;
+    }
+
+    *out_param = NULL;
+    parse = adapter_parse_json_string(data);
+    if (!parse) {
+        return INVALID_CMD;
+    }
+
+    name = adapter_get_json_string_value(parse, "name");
+    if (!name || name[0] == '\0') {
+        goto cleanup;
+    }
+    params = adapter_get_json_node_value(parse, "params");
+
+    if (strcmp(name, DCP_AUDIO_INPUT_TEXT) == 0) {
+        data_audio_input_text_ptr text_param = alloc_zeroed(sizeof(data_audio_input_text_t));
+        const char *text = params ? adapter_get_json_string_value(params, "text") : NULL;
+        if (!text_param) {
+            goto cleanup;
+        }
+        if (text) {
+            strncpy(text_param->text, text, sizeof(text_param->text) - 1);
+        }
+        *out_param = text_param;
+        cmd_type = DATA_AUDIO_INPUT_TEXT;
+    } else if (strcmp(name, DCP_AUDIO_OUTPUT_START) == 0) {
+        control_audio_output_state_ptr output_state = alloc_zeroed(sizeof(control_audio_output_state_t));
+        if (!output_state) {
+            goto cleanup;
+        }
+        output_state->state = ON;
+        *out_param = output_state;
+        cmd_type = CONTROL_AUDIO_OUTPUT_STATE;
+    } else if (strcmp(name, DCP_AUDIO_OUTPUT_TEXT) == 0) {
+        data_audio_output_text_ptr output_text = alloc_zeroed(sizeof(data_audio_output_text_t));
+        const char *text = params ? adapter_get_json_string_value(params, "text") : NULL;
+        const char *emotion = params ? adapter_get_json_string_value(params, "emotion") : NULL;
+        if (!output_text) {
+            goto cleanup;
+        }
+        if (text) {
+            strncpy(output_text->text, text, sizeof(output_text->text) - 1);
+        }
+        if (emotion) {
+            strncpy(output_text->emotion, emotion, sizeof(output_text->emotion) - 1);
+        }
+        *out_param = output_text;
+        cmd_type = DATA_AUDIO_OUTPUT_TEXT;
+    } else if (strcmp(name, DCP_AUDIO_OUTPUT_STOP) == 0) {
+        control_audio_output_state_ptr output_state = alloc_zeroed(sizeof(control_audio_output_state_t));
+        if (!output_state) {
+            goto cleanup;
+        }
+        output_state->state = OFF;
+        *out_param = output_state;
+        cmd_type = CONTROL_AUDIO_OUTPUT_STATE;
+    } else if (strcmp(name, DCP_SYSTEM_NOTIFICATION) == 0) {
+        event_system_notification_ptr notification = alloc_zeroed(sizeof(event_system_notification_t));
+        const char *level = params ? adapter_get_json_string_value(params, "level") : NULL;
+        const char *emotion = params ? adapter_get_json_string_value(params, "emotion") : NULL;
+        const char *message = params ? adapter_get_json_string_value(params, "message") : NULL;
+        if (!notification) {
+            goto cleanup;
+        }
+        notification->level = parse_system_notification_level_value(level);
+        if (emotion) {
+            strncpy(notification->emotion, emotion, sizeof(notification->emotion) - 1);
+        }
+        if (message) {
+            strncpy(notification->message, message, sizeof(notification->message) - 1);
+        }
+        *out_param = notification;
+        cmd_type = EVENT_SYSTEM_NOTIFICATION;
+    } else if (strcmp(name, DCP_DEVICE_LIFECYCLE) == 0) {
+        event_device_lifecycle_ptr lifecycle = alloc_zeroed(sizeof(event_device_lifecycle_t));
+        void *capabilities = params ? adapter_get_json_node_value(params, "capabilities") : NULL;
+        const char *subscription = params ? adapter_get_json_string_value(params, "subscription") : NULL;
+        if (!lifecycle) {
+            goto cleanup;
+        }
+        lifecycle->activated = params ? adapter_get_json_int_value(params, "activated", 0) : 0;
+        if (params && lifecycle->activated == 0 && adapter_get_json_boolean_value(params, "activated", false)) {
+            lifecycle->activated = 1;
+        }
+        lifecycle->subscription = parse_subscription_status_value(subscription);
+        if (capabilities) {
+            lifecycle->capabilities.chat = adapter_get_json_int_value(capabilities, "chat", 0);
+            lifecycle->capabilities.vision = adapter_get_json_int_value(capabilities, "vision", 0);
+        }
+        *out_param = lifecycle;
+        cmd_type = EVENT_DEVICE_LIFECYCLE;
+    } else if (strcmp(name, DCP_DEVICE_MODE_SET) == 0) {
+        control_device_mode_set_ptr mode_set = alloc_zeroed(sizeof(control_device_mode_set_t));
+        const char *mode = params ? adapter_get_json_string_value(params, "mode") : NULL;
+        if (!mode_set) {
+            goto cleanup;
+        }
+        mode_set->mode = parse_device_mode_value(mode);
+        *out_param = mode_set;
+        cmd_type = CONTROL_DEVICE_MODE_SET;
+    } else if (strcmp(name, DCP_DEVICE_MOTION_EXECUTE) == 0) {
+        control_device_motion_execute_ptr motion_execute = alloc_zeroed(sizeof(control_device_motion_execute_t));
+        const char *action = params ? adapter_get_json_string_value(params, "action") : NULL;
+        const char *priority = params ? adapter_get_json_string_value(params, "priority") : NULL;
+        if (!motion_execute) {
+            goto cleanup;
+        }
+        motion_execute->action = parse_device_motion_value(action);
+        motion_execute->priority = parse_device_motion_priority_value(priority);
+        motion_execute->repeat = params ? adapter_get_json_int_value(params, "repeat", 0) : 0;
+        motion_execute->speed = params ? parse_float_value(params, "speed", 1.0f) : 1.0f;
+        *out_param = motion_execute;
+        cmd_type = CONTROL_DEVICE_MOTION_EXECUTE;
+    } else if (strcmp(name, DCP_DEVICE_MOTION_STOP) == 0) {
+        control_device_motion_stop_ptr motion_stop = alloc_zeroed(sizeof(control_device_motion_stop_t));
+        const char *scope = params ? adapter_get_json_string_value(params, "scope") : NULL;
+        const char *type = params ? adapter_get_json_string_value(params, "type") : NULL;
+        if (!motion_stop) {
+            goto cleanup;
+        }
+        motion_stop->scope = parse_device_motion_stop_scope_value(scope);
+        motion_stop->type = parse_device_motion_value(type);
+        *out_param = motion_stop;
+        cmd_type = CONTROL_DEVICE_MOTION_STOP;
+    }
+
+cleanup:
+    if (parse) {
+        adapter_delete_json_object(parse);
+    }
+    if (cmd_type == INVALID_CMD && *out_param) {
+        free(*out_param);
+        *out_param = NULL;
+    }
+    return cmd_type;
+}
+
 
 
 // 收到 SIP 消息时的第一步处理函数
@@ -954,16 +1474,16 @@ fail:
 //   msg_len:     消息长度
 //   msg_info:    输出解析后的消息信息（可为 NULL）
 // 返回：解析结果
-int sip_parse_incoming_message(const char *raw_msg,  size_t msg_len, received_sip_message_ptr *msg_info)
+sip_ret_t sip_parse_incoming_message(const char *raw_msg,  size_t msg_len, received_sip_message_ptr *msg_info)
 {
     if (!raw_msg || msg_len == 0 || !msg_info) {
-        return -1;
+        return RET_ERROR;
     }
 
     // 初始化 osip 消息结构
     osip_message_t* sip = NULL;
     if (0 != osip_message_init(&sip)) {
-        return -1;
+        return RET_ERROR;
     }
 
     // 解析 SIP 消息
@@ -1107,7 +1627,7 @@ int sip_parse_incoming_message(const char *raw_msg,  size_t msg_len, received_si
         }
     } 
     
-    return 0;
+    return RET_OK;
 
 cleanup:
     if (sip) {
@@ -1117,7 +1637,7 @@ cleanup:
         free(*msg_info);
         *msg_info = NULL;
     }
-    return -1;
+    return RET_ERROR;
 }
 
 void init_sip(void) {

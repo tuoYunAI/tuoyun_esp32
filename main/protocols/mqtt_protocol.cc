@@ -200,7 +200,6 @@ bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
         ESP_LOGE(TAG, "Failed to encrypt audio data");
         return false;
     }
-
     return udp_->Send(encrypted) > 0;
 }
 
@@ -257,55 +256,69 @@ bool MqttProtocol::OpenAudioChannel(const std::string& wakeWord) {
          * UDP Encrypted OPUS Packet Format:
          * |type 1u|flags 1u|payload_len 2u|ssrc 4u|timestamp 4u|sequence 4u|
          * |payload payload_len|
+         * One UDP datagram may contain multiple consecutive frames.
          */
-        if (data.size() < sizeof(aes_nonce_)) {
-            ESP_LOGE(TAG, "Invalid audio packet size: %u", data.size());
-            return;
-        }
-        if (data[0] != 0x01) {
-            ESP_LOGE(TAG, "Invalid audio packet type: %x", data[0]);
-            return;
-        }
-        uint32_t timestamp = ntohl(*(uint32_t*)&data[8]);
-        uint32_t sequence = ntohl(*(uint32_t*)&data[12]);
-        if (sequence < remote_sequence_) {
-            ESP_LOGW(TAG, "Received audio packet with old sequence: %lu, expected: %lu", sequence, remote_sequence_);
-            return;
-        }
-        if (sequence != remote_sequence_ + 1) {
-            ESP_LOGW(TAG, "Received audio packet with wrong sequence: %lu, expected: %lu", sequence, remote_sequence_ + 1);
-        }
-
-        size_t decrypted_size = data.size() - aes_nonce_.size();
-        size_t nc_off = 0;
-        uint8_t stream_block[16] = {0};
-        auto nonce = (uint8_t*)data.data();
-        auto encrypted = (uint8_t*)data.data() + aes_nonce_.size();
-        auto packet = std::make_unique<AudioStreamPacket>();
-        packet->sample_rate = server_sample_rate_;
-        packet->frame_duration = server_frame_duration_;
-        packet->timestamp = timestamp;
-        packet->payload.resize(decrypted_size);
-        int ret = mbedtls_aes_crypt_ctr(&aes_ctx_, decrypted_size, &nc_off, nonce, stream_block, encrypted, (uint8_t*)packet->payload.data());
-        if (ret != 0) {
-            ESP_LOGE(TAG, "Failed to decrypt audio data, ret: %d", ret);
-            return;
-        }
-        /*
-        ESP_LOGI(TAG, "start timestamp: %ld, sequence: %ld, size: %d\n", timestamp, sequence, decrypted_size);
-        for(int i= 0; i < decrypted_size; i++){
-            printf("%02x ", packet->payload[i]);
-            if ((i + 1) % 16 == 0) {
-                printf("\n");
+        size_t offset = 0;
+        while (offset < data.size()) {
+            if (data.size() - offset < aes_nonce_.size()) {
+                ESP_LOGE(TAG, "Invalid audio packet size: %u", data.size() - offset);
+                break;
             }
+            if (data[offset] != 0x01) {
+                ESP_LOGE(TAG, "Invalid audio packet type: %x", data[offset]);
+                break;
+            }
+            uint32_t timestamp = ntohl(*(uint32_t*)&data[offset + 8]);
+            uint32_t sequence = ntohl(*(uint32_t*)&data[offset + 12]);
+            uint16_t payload_len = ntohs(*(uint16_t*)&data[offset + 2]);
+
+            if (data.size() - offset < aes_nonce_.size() + payload_len) {
+                ESP_LOGE(TAG, "Incomplete audio frame: need %u, have %u", aes_nonce_.size() + payload_len, data.size() - offset);
+                break;
+            }
+
+            if (sequence < remote_sequence_) {
+                ESP_LOGW(TAG, "Received audio packet with old sequence: %lu, expected: %lu", sequence, remote_sequence_);
+                offset += aes_nonce_.size() + payload_len;
+                continue;
+            }
+            if (sequence != remote_sequence_ + 1) {
+                ESP_LOGW(TAG, "Received audio packet with wrong sequence: %lu, expected: %lu", sequence, remote_sequence_ + 1);
+            }
+
+            size_t nc_off = 0;
+            uint8_t stream_block[16] = {0};
+            auto nonce = (uint8_t*)data.data() + offset;
+            auto encrypted = (uint8_t*)data.data() + offset + aes_nonce_.size();
+            auto packet = std::make_unique<AudioStreamPacket>();
+            packet->sample_rate = server_sample_rate_;
+            packet->frame_duration = server_frame_duration_;
+            packet->timestamp = timestamp;
+            packet->payload.resize(payload_len);
+            int ret = mbedtls_aes_crypt_ctr(&aes_ctx_, payload_len, &nc_off, nonce, stream_block, encrypted, (uint8_t*)packet->payload.data());
+            if (ret != 0) {
+                ESP_LOGE(TAG, "Failed to decrypt audio data, ret: %d", ret);
+                break;
+            }
+
+            /*
+            ESP_LOGI(TAG, "start timestamp: %ld, sequence: %ld, size: %d\n", timestamp, sequence, decrypted_size);
+            for(int i= 0; i < decrypted_size; i++){
+                printf("%02x ", packet->payload[i]);
+                if ((i + 1) % 16 == 0) {
+                    printf("\n");
+                }
+            }
+            printf("\nend");
+            */
+        
+            if (on_incoming_audio_ != nullptr) {
+                on_incoming_audio_(std::move(packet));
+            }
+            remote_sequence_ = sequence;
+            last_incoming_time_ = std::chrono::steady_clock::now();
+            offset += aes_nonce_.size() + payload_len;
         }
-        printf("\nend");
-        */
-        if (on_incoming_audio_ != nullptr) {
-            on_incoming_audio_(std::move(packet));
-        }
-        remote_sequence_ = sequence;
-        last_incoming_time_ = std::chrono::steady_clock::now();
     });
 
     udp_->Connect(udp_server_, udp_port_);

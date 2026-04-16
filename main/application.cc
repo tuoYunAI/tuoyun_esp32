@@ -513,6 +513,8 @@ void Application::InitializeProtocol() {
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
         if (GetDeviceState() == kDeviceStateSpeaking) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
+            extern void report_traffic_active();
+            report_traffic_active();
         }
     });
     
@@ -1145,7 +1147,7 @@ void Application::ProcMcpMessage(const std::string& message) {
         McpServer::GetInstance().ParseMessage(message);
     }
 }
-
+#if 0
 void Application::ProcSystemCommand(server_op_command_t command) {
     switch (command) {
         case SERVER_CMD_REBOOT:
@@ -1158,15 +1160,32 @@ void Application::ProcSystemCommand(server_op_command_t command) {
             break;
     }
 }   
+#endif
 
-void Application::ProcAlertMessage(server_message_notify_ptr alert){
-    if(alert->event == SERVER_MESSAGE_STATUS){
+void Application::ProcAlertMessage(event_system_notification_ptr alert){
+    /*if(alert->event == SERVER_MESSAGE_STATUS){
         if (alert->status == SERVER_STATUS_MEMBERSHIP_INVALID){
             last_error_message_ = Lang::Strings::DEVICE_MEMBERSHIP_EXPIRED;
             xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
             return;
         }
         
-    }
-    Alert(alert->command, alert->message, alert->emotion, Lang::Sounds::OGG_VIBRATION);
+    }*/
+    const char* status;
+    switch (alert->level)
+    {     
+    case _INFO_:
+        status = Lang::Strings::INFO;
+        break;
+    case _WARNING_:         
+        status = Lang::Strings::WARNING;
+        break;
+    case _CRITICAL_:
+        status = Lang::Strings::ERROR;
+        break;
+    default:    
+        status = Lang::Strings::INFO;
+        break;
+    }  
+    Alert(status, alert->message, alert->emotion, Lang::Sounds::OGG_VIBRATION);
 }
