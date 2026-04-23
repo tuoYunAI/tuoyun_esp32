@@ -259,6 +259,11 @@ static void proc_response_bye(MOVE received_sip_message_ptr message){
 static void proc_request_message(MOVE received_sip_message_ptr  message){
 
     if (message->body_length > 0) {
+        LOG_INFO("MESSAGE body(length=%d): %.*s",
+            message->body_length,
+            message->body_length,
+            message->message_body);
+
         // 解析 JSON
         void *received_msg = NULL;
         dcp_cmd_type_t cmd_type = parse_dcp_message(message->message_body, &received_msg);
@@ -357,9 +362,14 @@ static void proc_request_info(MOVE received_sip_message_ptr message){
     adapter_unlock_sip_mutex();
 
     if (message->body_length > 0) {
+        LOG_INFO("INFO body(length=%d): %.*s",
+            message->body_length,
+            message->body_length,
+            message->message_body);
 
         // 解析 JSON
         void *received_msg = NULL;
+        
         dcp_cmd_type_t cmd_type = parse_dcp_message(message->message_body, &received_msg);
 
         if (cmd_type == INVALID_CMD || received_msg == NULL) {
@@ -726,6 +736,7 @@ void handle_received_sip(const char *data, size_t len)
 {
     received_sip_message_ptr msg_info = NULL;
     sip_ret_t result = sip_parse_incoming_message(data, len, &msg_info);
+    LOG_INFO("sip_parse_incoming_message result=%d, len=%zu", result, len);
 
     if(result == RET_OK && msg_info != NULL){
         if (!is_response_message(msg_info)) {
