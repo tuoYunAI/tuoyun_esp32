@@ -64,7 +64,7 @@ public:
     void OnDisconnected(std::function<void()> callback);
 
     virtual bool Start(bool report_error = false) = 0;
-    virtual bool OpenAudioChannel(const std::string& wakeWord = std::string("")) = 0;
+    virtual bool OriginateSession(const std::string& wakeWord = std::string("")) = 0;
     virtual void CloseAudioChannel(bool notify_server = true) = 0;
     virtual bool IsAudioChannelOpened() const = 0;
     virtual bool SendAudio(std::unique_ptr<AudioStreamPacket> packet) = 0;

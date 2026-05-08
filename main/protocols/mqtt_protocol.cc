@@ -219,35 +219,7 @@ void MqttProtocol::CloseAudioChannel(bool notify_server) {
     }
 }
 
-bool MqttProtocol::OpenAudioChannel(const std::string& wakeWord) {
-    if (mqtt_ == nullptr || !mqtt_->IsConnected()) {
-        ESP_LOGI(TAG, "MQTT is not connected, try to connect now");
-        if (!Start(true)) {
-            return false;
-        }
-    }
-
-    error_occurred_ = false;
-    session_id_ = "";
-
-    xEventGroupClearBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT|MQTT_PROTOCOL_SERVER_ALERT_EVENT);
-
-    if (!SendInitCall(wakeWord)) {
-        return false;
-    }
-
-    // 等待服务器响应
-    EventBits_t bits = xEventGroupWaitBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT|MQTT_PROTOCOL_SERVER_ALERT_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(10000));
-    if (bits & MQTT_PROTOCOL_SERVER_ALERT_EVENT) {
-        ESP_LOGE(TAG, "Received server alert");
-        return false;
-    }
-    if (!(bits & MQTT_PROTOCOL_SERVER_HELLO_EVENT)) {
-        ESP_LOGE(TAG, "Failed to receive server hello");
-        SetError(Lang::Strings::SERVER_TIMEOUT);
-        return false;
-    }
-
+bool MqttProtocol::OpenAudioChannel() {
     std::lock_guard<std::mutex> lock(channel_mutex_);
     auto network = Board::GetInstance().GetNetwork();
     udp_ = network->CreateUdp(2);
@@ -326,6 +298,40 @@ bool MqttProtocol::OpenAudioChannel(const std::string& wakeWord) {
     if (on_audio_channel_opened_ != nullptr) {
         on_audio_channel_opened_();
     }
+    
+    return true;
+}
+
+bool MqttProtocol::OriginateSession(const std::string& wakeWord) {
+    if (mqtt_ == nullptr || !mqtt_->IsConnected()) {
+        ESP_LOGI(TAG, "MQTT is not connected, try to connect now");
+        if (!Start(true)) {
+            return false;
+        }
+    }
+
+    error_occurred_ = false;
+    session_id_ = "";
+
+    xEventGroupClearBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT|MQTT_PROTOCOL_SERVER_ALERT_EVENT);
+
+    if (!SendInitCall(wakeWord)) {
+        return false;
+    }
+
+    // 等待服务器响应
+    EventBits_t bits = xEventGroupWaitBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT|MQTT_PROTOCOL_SERVER_ALERT_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(10000));
+    if (bits & MQTT_PROTOCOL_SERVER_ALERT_EVENT) {
+        ESP_LOGE(TAG, "Received server alert");
+        return false;
+    }
+    if (!(bits & MQTT_PROTOCOL_SERVER_HELLO_EVENT)) {
+        ESP_LOGE(TAG, "Failed to receive server hello");
+        SetError(Lang::Strings::SERVER_TIMEOUT);
+        return false;
+    }
+
+    this->OpenAudioChannel();
     return true;
 }
 

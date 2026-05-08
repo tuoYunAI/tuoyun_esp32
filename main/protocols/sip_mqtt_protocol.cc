@@ -95,21 +95,31 @@ void SipMqttProtocol::ShowErrorMessage(const std::string& message) {
 }
 
 void SipMqttProtocol::OnCallEstablished(std::string sessionId,  media_parameter_ptr mediaParam) {
+    auto& app = Application::GetInstance();
     session_id_ = sessionId;
     server_sample_rate_ = mediaParam->sample_rate;
     server_frame_duration_ = mediaParam->frame_duration;
 
     udp_server_ = std::string(mediaParam->ip);
     udp_port_ = mediaParam->port;
-
     aes_nonce_ = std::string((char*)mediaParam->nonce, 16);
 
     mbedtls_aes_init(&aes_ctx_);
     mbedtls_aes_setkey_enc(&aes_ctx_, (const unsigned char*)mediaParam->aes_key, 128);
     local_sequence_ = 0;
     remote_sequence_ = 0;
-    xEventGroupSetBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT);
-    ESP_LOGI(TAG, "SIP call established,UDP server: %s, port: %d", udp_server_.c_str(), udp_port_);
+
+    if (app.GetDeviceState() == kDeviceStateConnecting) {
+        xEventGroupSetBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT);
+        ESP_LOGI(TAG, "@@@@@@@@@@@@SIP call established,UDP server: %s, port: %d", udp_server_.c_str(), udp_port_);
+    }else{
+        ESP_LOGI(TAG, "@@@@@@@@@@@@SIP call established, now to open audio channel");
+        OpenAudioChannel();
+        app.Schedule([&app]() {
+            app.SetDeviceState(kDeviceStateSpeaking);
+        });
+    }
+    
 }
 
 void SipMqttProtocol::OnCallAckError(session_call_error_t error_code) {

@@ -36,7 +36,8 @@ public:
 
     bool Start(bool report_error = false) override;
     bool SendAudio(std::unique_ptr<AudioStreamPacket> packet) override;
-    bool OpenAudioChannel(const std::string& wakeWord = std::string("")) override;
+    bool OriginateSession(const std::string& wakeWord = std::string("")) override;
+    bool OpenAudioChannel();
     void CloseAudioChannel(bool notify_server = true) override;
     bool IsAudioChannelOpened() const override;
     Mqtt& getMqtt();

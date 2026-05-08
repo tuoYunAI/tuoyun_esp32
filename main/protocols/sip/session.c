@@ -10,8 +10,10 @@
 #include "adapter.h"
 
 static void send_invite_ack();
+
+static void reject_invite_request(received_sip_message_ptr message, int status_code, const char *reason_phrase);
 static register_param_t m_register_param = {
-    .online = 1,
+    .scenario = 1,
     .battery = 0,
     .network = {
         .type = WIFI,
@@ -84,7 +86,7 @@ void report_register_status(register_param_ptr  param){
     if (!param) return;
     m_register_param.battery = param->battery;
     m_register_param.network = param->network;
-    m_register_param.online = param->online;
+    m_register_param.scenario = param->scenario;
     m_register_param.network.rssi = param->network.rssi;
     m_register_param.network.type = param->network.type;
 }
@@ -256,6 +258,139 @@ static void proc_response_bye(MOVE received_sip_message_ptr message){
     return;
 }
 
+static void proc_request_invite(MOVE received_sip_message_ptr  message){
+    LOG_INFO("Processing INVITE request");
+
+    adapter_lock_sip_mutex();
+    int ret = RET_ERROR;
+    char *out_msg = NULL;
+    size_t out_len = 0;
+    char to_tag[33] = {0};
+    received_sip_message_ptr dialog_anchor = NULL;
+    downlink_sdp_parameter_t sdp = {0};
+
+    do {
+        if (m_session_state.session_status != SESSION_STATUS_IDLE) {
+            LOG_INFO("Reject INVITE while session is busy: %d", m_session_state.session_status);
+            reject_invite_request(message, 486, "Busy Here");
+            break;
+        }
+
+        if (message->body_length == 0 || parse_sdp(message->message_body, &sdp) != RET_OK) {
+            LOG_INFO("Invalid SDP in INVITE request");
+            reject_invite_request(message, 488, "Not Acceptable Here");
+            break;
+        }
+        LOG_INFO("Received INVITE with SDP: ip=%s, port=%d, codec=%s, transport=%s, sample_rate=%d, channels=%d, frame_duration=%d, encryption=%s",
+                 sdp.ip, sdp.port, sdp.codec, sdp.transport, sdp.sample_rate, sdp.channels, sdp.frame_duration, sdp.encryption);
+        uplink_sdp_parameter_t sdp_param = {
+            .session_id = {0},
+            .uid = m_session_state.uid,
+            .device_ip = m_session_state.device_ip,
+            .codec = g_audio_enc_media_param.codec,
+            .sample_rate = g_audio_enc_media_param.sample_rate,
+            .channels = g_audio_enc_media_param.channels,
+            .frame_duration_ms = OPUS_FRAME_DURATION_MS,
+            .support_mcp = SESSION_SUPORT_MCP,
+            .cbr = SESSION_OPUS_CBR,
+            .frame_gap = SESSION_AUDIO_FRAME_GAP,
+            .wake_up_word = NULL,
+            .support_frame_aggregation = SESSION_SUPPORT_FRAME_AGGREGATION,
+            .support_redundant = 0
+        };
+        strncpy(sdp_param.session_id, sdp.session_id, sizeof(sdp_param.session_id) - 1);
+        if (build_invite_200_ok_response(message,
+                                         m_session_state.uid,
+                                         m_session_state.device_ip,
+                                         &sdp_param,
+                                         to_tag,
+                                         sizeof(to_tag),
+                                         &out_msg,
+                                         &out_len) != RET_OK ||
+            !out_msg || out_len == 0) {
+            LOG_INFO("Failed to build 200 OK for INVITE request");
+            break;
+        }
+
+        dialog_anchor = build_dialog_anchor_from_invite_request(message, to_tag, m_session_state.uid, m_session_state.device_ip);
+        if (!dialog_anchor) {
+            LOG_INFO("Failed to cache dialog state for INVITE request");
+            break;
+        }
+
+        strncpy(g_audio_dec_media_param.ip, sdp.ip, sizeof(g_audio_dec_media_param.ip) - 1);
+        g_audio_dec_media_param.port = sdp.port;
+        strncpy(g_audio_dec_media_param.codec, sdp.codec, sizeof(g_audio_dec_media_param.codec) - 1);
+        strncpy(g_audio_dec_media_param.transport, sdp.transport, sizeof(g_audio_dec_media_param.transport) - 1);
+        g_audio_dec_media_param.sample_rate = sdp.sample_rate;
+        g_audio_dec_media_param.channels = sdp.channels;
+        g_audio_dec_media_param.frame_duration = sdp.frame_duration;
+        strncpy(g_audio_dec_media_param.encryption, sdp.encryption, sizeof(g_audio_dec_media_param.encryption) - 1);
+        memcpy(g_audio_dec_media_param.nonce, sdp.nonce, sizeof(g_audio_dec_media_param.nonce));
+        memcpy(g_audio_dec_media_param.aes_key, sdp.aes_key, sizeof(g_audio_dec_media_param.aes_key));
+
+        if (adapter_start_traffic_tunnel(&g_audio_dec_media_param) != 0) {
+            LOG_INFO("Failed to start traffic tunnel for INVITE request");
+            break;
+        }
+
+        transmit_sip(out_msg);
+
+        m_session_state.session_status = SESSION_STATUS_IN_CALL;
+        m_session_state.last_keepalive_ms = adapter_get_system_ms();
+        m_session_state.last_traffic_ms = m_session_state.last_keepalive_ms;
+        m_session_state.last_req_message_ms = 0;
+        m_session_state.last_req_message_seq = 0;
+        strncpy(m_session_state.session_id, message->call_id, sizeof(m_session_state.session_id) - 1);
+        m_session_state.session_id[sizeof(m_session_state.session_id) - 1] = '\0';
+        m_session_state.invite_200_ok_resp_message = dialog_anchor;
+        dialog_anchor = NULL;
+
+        on_call_established(m_session_state.session_id, &g_audio_dec_media_param);
+        ret = RET_OK;
+    } while (0);
+
+    if (dialog_anchor) {
+        free(dialog_anchor);
+    }
+    if (out_msg) {
+        free_sip_message(out_msg);
+    }
+    if (ret != RET_OK) {
+        adapter_clear_traffic_tunnel();
+    }
+
+    adapter_unlock_sip_mutex();
+    free(message);
+}
+
+static void reject_invite_request(received_sip_message_ptr message, int status_code, const char *reason_phrase)
+{
+    char *out_msg = NULL;
+    size_t out_len = 0;
+
+    if (!message || !reason_phrase) {
+        return;
+    }
+
+    if (build_invite_error_response(message,
+                                    m_session_state.uid,
+                                    m_session_state.device_ip,
+                                    status_code,
+                                    reason_phrase,
+                                    &out_msg,
+                                    &out_len) != RET_OK ||
+        !out_msg || out_len == 0) {
+        LOG_INFO("Failed to build INVITE error response: %d %s", status_code, reason_phrase);
+        return;
+    }
+
+    transmit_sip(out_msg);
+    free_sip_message(out_msg);
+}
+
+
+
 static void proc_request_message(MOVE received_sip_message_ptr  message){
 
     if (message->body_length > 0) {
@@ -422,7 +557,7 @@ static void proc_request_info(MOVE received_sip_message_ptr message){
     return;
 }
 
-
+static int power_on_register = 0;
 void send_register(register_param_ptr param){
 
     if(!param){
@@ -431,7 +566,8 @@ void send_register(register_param_ptr param){
     }
     LOG_INFO("Sending REGISTER request");
     adapter_lock_sip_mutex();
-
+    param->scenario = power_on_register == 0 ? 0 : 1;
+    power_on_register = 1; // 只在第一次注册时携带开机注册标志，之后的注册都不携带  
     do{
         if (m_session_state.session_status > SESSION_STATUS_REGISTERING){
             break;
@@ -730,7 +866,11 @@ void handle_received_sip(const char *data, size_t len)
     if(result == RET_OK && msg_info != NULL){
         if (!is_response_message(msg_info)) {
             // 设备只会收到如下几种服务器下发的
-            if (strcmp(msg_info->method, "MESSAGE") == 0) {
+            if (strcmp(msg_info->method, "INVITE") == 0) {
+                // 服务器发起会话
+                proc_request_invite(msg_info);
+
+            } else if (strcmp(msg_info->method, "MESSAGE") == 0) {
                 // 服务器下发事件
                 proc_request_message(msg_info);
 

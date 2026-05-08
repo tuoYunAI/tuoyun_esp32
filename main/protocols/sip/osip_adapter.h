@@ -58,6 +58,7 @@ typedef struct sip_register_param{
  * 结构体中的指针指向的字符串在make_sdp调用返回后就不再使用, 可以释放
  */
 typedef struct uplink_sdp_parameter {
+  char session_id[100];
   /**
    * 设备的UID, 从服务器中获取
    */
@@ -115,6 +116,7 @@ typedef struct uplink_sdp_parameter {
  * 
  */
 typedef struct downlink_sdp_parameter{
+  char session_id[100];
   /**
    * 服务端的IP地址
    */
@@ -268,6 +270,23 @@ int is_response_ok(received_sip_message_ptr msg);
 
 sip_ret_t build_200_ok_response(received_sip_message_ptr request, char **out_msg, size_t *out_len);
 
+sip_ret_t build_invite_200_ok_response(received_sip_message_ptr request,
+                                       const char *uid,
+                                       const char *device_ip,
+                                       uplink_sdp_parameter_ptr sdp,
+                                       char *out_to_tag,
+                                       size_t out_to_tag_size,
+                                       char **out_msg,
+                                       size_t *out_len);
+
+sip_ret_t build_invite_error_response(received_sip_message_ptr request,
+                                      const char *uid,
+                                      const char *device_ip,
+                                      int status_code,
+                                      const char *reason_phrase,
+                                      char **out_msg,
+                                      size_t *out_len);
+
 sip_ret_t build_register(sip_register_param_ptr param, char **out_msg, size_t *out_len);
 
 sip_ret_t parse_sdp(const char *sdp_buf, downlink_sdp_parameter_ptr param);
@@ -310,6 +329,8 @@ sip_ret_t build_session_barge_in(
 dcp_cmd_type_t parse_dcp_message(char* data, void** out_param);
 
 sip_ret_t sip_parse_incoming_message(const char *raw_msg, size_t msg_len, received_sip_message_ptr *msg_info);
+
+received_sip_message_ptr build_dialog_anchor_from_invite_request(received_sip_message_ptr request, const char *to_tag, const char *uid, const char *device_ip);
 
 void free_sip_message(char* sip);
    

@@ -79,7 +79,7 @@ void WebsocketProtocol::CloseAudioChannel(bool notify_server) {
     websocket_.reset();
 }
 
-bool WebsocketProtocol::OpenAudioChannel(std::string const& wakeWord) {
+bool WebsocketProtocol::OriginateSession(std::string const& wakeWord) {
     Settings settings("websocket", false);
     std::string url = settings.GetString("url");
     std::string token = settings.GetString("token");

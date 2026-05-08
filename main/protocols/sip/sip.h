@@ -45,7 +45,7 @@ typedef struct {
 
 typedef struct{
 
-    int online; // 1: online, 0: offline
+    int scenario; // 1: regualar, 0: boot
     int battery; // battery level percentage, 0-100
     network_t network;
 }register_param_t, *register_param_ptr;

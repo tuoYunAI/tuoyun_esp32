@@ -375,7 +375,7 @@ sip_ret_t build_register(sip_register_param_ptr param, char **out_msg, size_t *o
     {
         void *root = build_dcp_base_msg(EVENT_REGISTER);
         void *params = adapter_create_json_object();
-        adapter_put_json_object_value(params, "online", adapter_json_object_new_boolean(param->register_param.online));
+        adapter_put_json_object_value(params, "scenario", adapter_json_object_new_boolean(param->register_param.scenario));
         adapter_put_json_object_value(params, "battery", adapter_json_object_new_int(param->register_param.battery));
         void *network = adapter_create_json_object();
         char* type = NULL;
@@ -445,7 +445,7 @@ static sip_ret_t make_sdp(uplink_sdp_parameter_ptr param, char *dst, size_t dst_
         "m=audio 0 UDP/AI-AUDIO\r\n"
         "a=lovaiot-uplink:codec=%s,frame=%d,sample_rate=%d,channels=%d,mcp=%d%s\r\n"
         "a=lovaiot-downlink:cbr=%d,frame_gap=%d,aggregation=%d,redundant=%d\r\n",
-        param->uid, call_id, version, 
+        param->uid, param->session_id, version, 
         param->codec, param->frame_duration_ms, param->sample_rate, param->channels, param->support_mcp ? 1 : 0, wake_word_part,
         param->cbr ? 1 : 0, param->frame_gap, param->support_frame_aggregation ? 1 : 0, param->support_redundant ? 1 : 0    
     );
@@ -500,6 +500,48 @@ static void parse_downlink_attribute_value(const char *value, downlink_sdp_param
     }
 }
 
+static void parse_origin_session_id(const char *sdp_buf, downlink_sdp_parameter_ptr param)
+{
+    if (!sdp_buf || !param) {
+        return;
+    }
+
+    const char *origin = strstr(sdp_buf, "\no=");
+    if (origin) {
+        origin += 3;
+    } else if (strncmp(sdp_buf, "o=", 2) == 0) {
+        origin = sdp_buf + 2;
+    } else {
+        return;
+    }
+
+    while (*origin == ' ') {
+        origin++;
+    }
+
+    const char *session_id = strchr(origin, ' ');
+    if (!session_id) {
+        return;
+    }
+    while (*session_id == ' ') {
+        session_id++;
+    }
+    if (*session_id == '\0' || *session_id == '\r' || *session_id == '\n') {
+        return;
+    }
+
+    size_t session_id_len = strcspn(session_id, " \r\n");
+    if (session_id_len == 0) {
+        return;
+    }
+    if (session_id_len >= sizeof(param->session_id)) {
+        session_id_len = sizeof(param->session_id) - 1;
+    }
+
+    memcpy(param->session_id, session_id, session_id_len);
+    param->session_id[session_id_len] = '\0';
+}
+
 sip_ret_t parse_sdp(const char *sdp_buf, downlink_sdp_parameter_ptr param)
 {
     if (!sdp_buf || !param) return RET_ERROR;
@@ -508,6 +550,7 @@ sip_ret_t parse_sdp(const char *sdp_buf, downlink_sdp_parameter_ptr param)
     CHECK_RET(sdp_message_init(&sdp));
 
     CHECK_RET(sdp_message_parse(sdp, sdp_buf));
+    parse_origin_session_id(sdp_buf, param);
     
     // 连接信息（会话级）
     const char *ip = sdp_message_c_addr_get(sdp, -1, 0);
@@ -782,6 +825,90 @@ sip_ret_t build_200_ok_response(received_sip_message_ptr request, char **out_msg
                          request->call_id_header, request->cseq_header, request->contact_header, NULL, NULL, 0,
                          out_msg, out_len); 
     
+}
+
+sip_ret_t build_invite_200_ok_response(received_sip_message_ptr request,
+                                       const char *uid,
+                                       const char *device_ip,
+                                       uplink_sdp_parameter_ptr sdp,
+                                       char *out_to_tag,
+                                       size_t out_to_tag_size,
+                                       char **out_msg,
+                                       size_t *out_len)
+{
+    if (!request || !uid || !device_ip || !out_msg || !out_len || !out_to_tag || out_to_tag_size == 0) {
+        return RET_ERROR;
+    }
+
+    char to_tag[33] = {0};
+    char contact_header[128] = {0};
+    char sdp_body[350] = {0};
+    const char *content_type = NULL;
+    const char *message_body = NULL;
+    size_t body_length = 0;
+
+    sip_generate_tag(to_tag, sizeof(to_tag), uid, device_ip, request->call_id, (uint32_t)request->cseq_num);
+    snprintf(contact_header, sizeof(contact_header), "<sip:%s@%s>", uid, device_ip);
+
+    if (sdp) {
+        if (make_sdp(sdp, sdp_body, sizeof(sdp_body)) != RET_OK) {
+            return RET_ERROR;
+        }
+        content_type = "application/sdp";
+        message_body = sdp_body;
+        body_length = strlen(sdp_body);
+    }
+
+    if (snprintf(out_to_tag, out_to_tag_size, "%s", to_tag) >= (int)out_to_tag_size) {
+        return RET_ERROR;
+    }
+
+    return build_response(200,
+                          "OK",
+                          request->via_header,
+                          request->from_header,
+                          request->to_header,
+                          to_tag,
+                          request->call_id_header,
+                          request->cseq_header,
+                          contact_header,
+                          content_type,
+                          message_body,
+                          body_length,
+                          out_msg,
+                          out_len);
+}
+
+sip_ret_t build_invite_error_response(received_sip_message_ptr request,
+                                      const char *uid,
+                                      const char *device_ip,
+                                      int status_code,
+                                      const char *reason_phrase,
+                                      char **out_msg,
+                                      size_t *out_len)
+{
+    char to_tag[33] = {0};
+
+    if (!request || !uid || !device_ip || !reason_phrase || !out_msg || !out_len) {
+        return RET_ERROR;
+    }
+
+    sip_generate_tag(to_tag, sizeof(to_tag), uid, device_ip, request->call_id, (uint32_t)request->cseq_num);
+
+    return build_response(status_code,
+                          reason_phrase,
+                          request->via_header,
+                          request->from_header,
+                          request->to_header,
+                          to_tag,
+                          request->call_id_header,
+                          request->cseq_header,
+                          NULL,
+                          NULL,
+                          NULL,
+                          0,
+                          out_msg,
+                          out_len);
 }
 
 
@@ -1653,4 +1780,56 @@ int is_response_message(received_sip_message_ptr msg){
 int is_response_ok(received_sip_message_ptr msg){
     if (!msg) return 0;
     return (msg->status_code == 200);
+}
+
+
+
+received_sip_message_ptr build_dialog_anchor_from_invite_request(received_sip_message_ptr request, const char *to_tag, const char *uid, const char *device_ip)
+{
+    static const char to_tag_suffix[] = ";tag=";
+
+    if (!request || !to_tag || to_tag[0] == '\0') {
+        return NULL;
+    }
+
+    received_sip_message_ptr dialog = calloc(1, sizeof(received_sip_message_t));
+    if (!dialog) {
+        return NULL;
+    }
+
+    strncpy(dialog->method, request->method, sizeof(dialog->method) - 1);
+    dialog->status_code = 200;
+    strncpy(dialog->reason_phrase, "OK", sizeof(dialog->reason_phrase) - 1);
+    dialog->cseq_num = request->cseq_num;
+    strncpy(dialog->call_id, request->call_id, sizeof(dialog->call_id) - 1);
+    strncpy(dialog->call_id_header, request->call_id_header, sizeof(dialog->call_id_header) - 1);
+    strncpy(dialog->cseq_header, request->cseq_header, sizeof(dialog->cseq_header) - 1);
+    strncpy(dialog->to_header, request->from_header, sizeof(dialog->to_header) - 1);
+    {
+        int written = snprintf(dialog->contact_header, sizeof(dialog->contact_header), "<sip:%s@%s>", uid, device_ip);
+        if (written < 0 || written >= (int)sizeof(dialog->contact_header)) {
+            free(dialog);
+            return NULL;
+        }
+    }
+
+    if (strstr(request->to_header, ";tag=") != NULL) {
+        strncpy(dialog->from_header, request->to_header, sizeof(dialog->from_header) - 1);
+    } else {
+        size_t to_header_len = strnlen(request->to_header, sizeof(dialog->from_header));
+        size_t to_tag_len = strlen(to_tag);
+        size_t suffix_len = sizeof(to_tag_suffix) - 1;
+
+        if (to_header_len >= sizeof(dialog->from_header) ||
+            to_header_len + suffix_len + to_tag_len >= sizeof(dialog->from_header)) {
+            free(dialog);
+            return NULL;
+        }
+
+        memcpy(dialog->from_header, request->to_header, to_header_len);
+        memcpy(dialog->from_header + to_header_len, to_tag_suffix, suffix_len);
+        memcpy(dialog->from_header + to_header_len + suffix_len, to_tag, to_tag_len + 1);
+    }
+
+    return dialog;
 }
