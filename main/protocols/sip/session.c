@@ -185,6 +185,7 @@ static sip_ret_t proc_response_invite(MOVE received_sip_message_ptr message){
 
             m_session_state.session_status = SESSION_STATUS_IN_CALL;
             m_session_state.last_keepalive_ms = adapter_get_system_ms();
+            m_session_state.last_traffic_ms = m_session_state.last_keepalive_ms;
             m_session_state.last_req_message_ms = 0;
             m_session_state.last_req_message_seq = 0;
             strncpy(m_session_state.session_id, message->call_id, sizeof(m_session_state.session_id)-1);
@@ -258,6 +259,7 @@ static void proc_response_bye(MOVE received_sip_message_ptr message){
     return;
 }
 
+
 static void proc_request_invite(MOVE received_sip_message_ptr  message){
     LOG_INFO("Processing INVITE request");
 
@@ -273,6 +275,9 @@ static void proc_request_invite(MOVE received_sip_message_ptr  message){
         if (m_session_state.session_status != SESSION_STATUS_IDLE) {
             LOG_INFO("Reject INVITE while session is busy: %d", m_session_state.session_status);
             reject_invite_request(message, 486, "Busy Here");
+            clear_session();
+            on_call_terminated_by_server();
+            adapter_clear_traffic_tunnel();
             break;
         }
 
@@ -869,6 +874,7 @@ void handle_received_sip(const char *data, size_t len)
             if (strcmp(msg_info->method, "INVITE") == 0) {
                 // 服务器发起会话
                 proc_request_invite(msg_info);
+                
 
             } else if (strcmp(msg_info->method, "MESSAGE") == 0) {
                 // 服务器下发事件
@@ -1048,7 +1054,7 @@ void init_session_module(const char* uid, const char* device_ip){
 
 #ifdef SIP_MESSAGE_CACHED_IN_LIST
     osip_list_init(&m_received_sip_list);
-    adapter_start_thread(mqtt_proc_task, "mqtt_proc_task", 1024*8, 16);
+    adapter_start_thread(mqtt_proc_task, "mqtt_proc_task", 1024*8, 16, NULL);
 #else
     send_register(&m_register_param);
 #endif

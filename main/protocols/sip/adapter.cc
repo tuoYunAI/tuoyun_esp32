@@ -63,11 +63,12 @@ uint32_t adapter_get_system_ms(void){
 
 
 
-sip_ret_t adapter_start_thread(void (*task_func)(void*), const char* name, int stack_size, int priority){
+sip_ret_t adapter_start_thread(void (*task_func)(void*), const char* name, int stack_size, int priority, void * const pvParameters){
     StackType_t *task_stack = (StackType_t *)heap_caps_malloc(stack_size, MALLOC_CAP_SPIRAM);
     StaticTask_t *task_tcb = (StaticTask_t *)heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    BaseType_t ret;    if (task_stack && task_tcb) {
-        TaskHandle_t ret =xTaskCreateStatic(task_func, name ? name : "poll", stack_size, NULL, priority, task_stack, task_tcb);
+    BaseType_t ret;    
+    if (task_stack && task_tcb) {
+        TaskHandle_t ret =xTaskCreateStatic(task_func, name ? name : "poll", stack_size, pvParameters, priority, task_stack, task_tcb);
         return ret != NULL ? RET_OK : RET_ERROR;
     } else {
         if (task_stack) free(task_stack);
@@ -77,7 +78,7 @@ sip_ret_t adapter_start_thread(void (*task_func)(void*), const char* name, int s
             task_func,
             name ? name:"poll",
             stack_size,
-            NULL,
+            pvParameters,
             priority,
             NULL
         );

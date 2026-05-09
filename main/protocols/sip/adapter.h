@@ -66,7 +66,7 @@ sip_ret_t adapter_start_periodic_task(void (*task_func)(void *), int period_ms, 
 /**
  * @brief  Start a new thread
  */
-sip_ret_t adapter_start_thread(void (*task_func)(void*), const char* name, int stack_size, int priority);
+sip_ret_t adapter_start_thread(void (*task_func)(void*), const char* name, int stack_size, int priority, void * const pvParameters);
 
 /**
  * @brief  Delay current task for specified milliseconds
