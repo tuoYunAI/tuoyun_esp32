@@ -33,6 +33,7 @@ bool SipMqttProtocol::Start(bool report_error) {
 
     Mqtt& mqtt = getMqtt();
     mqtt.OnMessage([this](const std::string& topic, const std::string& payload) {
+        ESP_LOGI(TAG, "MQTT message topic=%s payload=%s", topic.c_str(), payload.c_str());
         handle_received_mqtt_message(payload.c_str(), payload.length());
         last_incoming_time_ = std::chrono::steady_clock::now();
     });
