@@ -827,6 +827,32 @@ sip_ret_t build_200_ok_response(received_sip_message_ptr request, char **out_msg
     
 }
 
+sip_ret_t build_error_response(received_sip_message_ptr request,
+                               int status_code,
+                               const char *reason_phrase,
+                               char **out_msg,
+                               size_t *out_len)
+{
+    if (!request || !reason_phrase || !out_msg || !out_len) {
+        return RET_ERROR;
+    }
+
+    return build_response(status_code,
+                          reason_phrase,
+                          request->via_header,
+                          request->from_header,
+                          request->to_header,
+                          NULL,
+                          request->call_id_header,
+                          request->cseq_header,
+                          request->contact_header,
+                          NULL,
+                          NULL,
+                          0,
+                          out_msg,
+                          out_len);
+}
+
 sip_ret_t build_invite_200_ok_response(received_sip_message_ptr request,
                                        const char *uid,
                                        const char *device_ip,

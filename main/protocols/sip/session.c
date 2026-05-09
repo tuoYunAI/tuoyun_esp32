@@ -12,6 +12,7 @@
 static void send_invite_ack();
 
 static void reject_invite_request(received_sip_message_ptr message, int status_code, const char *reason_phrase);
+static void reject_info_request(received_sip_message_ptr message, int status_code, const char *reason_phrase);
 static register_param_t m_register_param = {
     .scenario = 1,
     .battery = 0,
@@ -394,6 +395,31 @@ static void reject_invite_request(received_sip_message_ptr message, int status_c
     free_sip_message(out_msg);
 }
 
+static void reject_info_request(received_sip_message_ptr message, int status_code, const char *reason_phrase)
+{
+
+    char *out_msg = NULL;
+    size_t out_len = 0;
+
+    if (!message || !reason_phrase) {
+        return;
+    }
+    LOG_INFO("Rejecting INFO request: %d %s", status_code, reason_phrase);
+
+    if (build_error_response(message,
+                             status_code,
+                             reason_phrase,
+                             &out_msg,
+                             &out_len) != RET_OK ||
+        !out_msg || out_len == 0) {
+        LOG_INFO("Failed to build INFO error response: %d %s", status_code, reason_phrase);
+        return;
+    }
+
+    transmit_sip(out_msg);
+    free_sip_message(out_msg);
+}
+
 
 
 static void proc_request_message(MOVE received_sip_message_ptr  message){
@@ -484,12 +510,14 @@ static void proc_request_info(MOVE received_sip_message_ptr message){
     adapter_lock_sip_mutex();
     if (m_session_state.session_status != SESSION_STATUS_IN_CALL){
         adapter_unlock_sip_mutex();
+        reject_info_request(message, 481, "Call/Transaction Does Not Exist");
         free(message);
         return;
     }
 
     if (strncmp(message->call_id, m_session_state.session_id, sizeof(m_session_state.session_id)) != 0){
         adapter_unlock_sip_mutex();
+        reject_info_request(message, 481, "Call/Transaction Does Not Exist");
         free(message);
         return;
     }

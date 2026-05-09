@@ -270,6 +270,12 @@ int is_response_ok(received_sip_message_ptr msg);
 
 sip_ret_t build_200_ok_response(received_sip_message_ptr request, char **out_msg, size_t *out_len);
 
+sip_ret_t build_error_response(received_sip_message_ptr request,
+                               int status_code,
+                               const char *reason_phrase,
+                               char **out_msg,
+                               size_t *out_len);
+
 sip_ret_t build_invite_200_ok_response(received_sip_message_ptr request,
                                        const char *uid,
                                        const char *device_ip,
