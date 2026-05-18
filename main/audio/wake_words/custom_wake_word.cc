@@ -43,6 +43,9 @@ void CustomWakeWord::ParseWakenetModelConfig() {
         ESP_LOGE(TAG, "Failed to read index.json");
         return;
     }
+    ESP_LOGE(TAG, "index.json content (%u bytes):\n%.*s",
+             (unsigned int)size, (int)size, static_cast<const char *>(ptr));
+
     cJSON* root = cJSON_ParseWithLength(static_cast<char*>(ptr), size);
     if (root == nullptr) {
         ESP_LOGE(TAG, "Failed to parse index.json");

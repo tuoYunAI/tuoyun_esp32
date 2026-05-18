@@ -78,6 +78,8 @@ bool Assets::LoadSrmodelsFromIndex(Assets* assets, cJSON* root) {
             ESP_LOGE(TAG, "The index.json file is not found");
             return false;
         }
+        ESP_LOGE(TAG, "index.json content (%u bytes):\n%.*s",
+                 (unsigned int)size, (int)size, static_cast<const char *>(ptr));
 
         root = cJSON_ParseWithLength(static_cast<char*>(ptr), size);
         if (root == nullptr) {
@@ -217,6 +219,8 @@ bool Assets::LvglStrategy::Apply(Assets* assets) {
         ESP_LOGE(TAG, "The index.json file is not found");
         return false;
     }
+    ESP_LOGE(TAG, "index.json content (%u bytes):\n%.*s",
+             (unsigned int)size, (int)size, static_cast<const char *>(ptr));
 
     cJSON* root = cJSON_ParseWithLength(static_cast<char*>(ptr), size);
     if (root == nullptr) {

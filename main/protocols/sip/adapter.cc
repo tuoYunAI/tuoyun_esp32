@@ -393,12 +393,37 @@ void on_set_device_mode(MOVE control_device_mode_set_ptr params){
     free(params);
 }
 
+static const char* motion_to_emotion(control_device_motion_execute_ptr params) {
+    if (params == nullptr) {
+        return "neutral";
+    }
+
+    switch (params->action)
+    {
+    case NOD:
+        return "happy";
+    case SHAKE_HEAD:
+        return "angry";
+    case DANCE:
+        return "laughing";
+    case WAVE:
+        return "winking";
+    case EMOTION:
+        return "happy";
+    case CUSTOM:
+        return "neutral";
+    default:
+        return "neutral";
+    }
+}
+
 void on_execute_motion(MOVE control_device_motion_execute_ptr params){
     if (params == nullptr) {
         return;
     }
     auto& app = Application::GetInstance();
     std::string motion_str;
+    const char* emotion = motion_to_emotion(params);
     switch (params->action)
     {
     case NOD:
@@ -423,6 +448,7 @@ void on_execute_motion(MOVE control_device_motion_execute_ptr params){
         motion_str = "motion: unknown";
         break;
     }
+    app.ShowEmotion(emotion);
     app.ShowUserText(motion_str);
     free(params);
     
@@ -433,6 +459,7 @@ void on_stop_motion(MOVE control_device_motion_stop_ptr params){
         return;
     }
     auto& app = Application::GetInstance();
+    app.ShowEmotion("neutral");
     app.ShowUserText("motion: stop");
     free(params);
 }   
