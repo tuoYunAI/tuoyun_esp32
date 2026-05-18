@@ -1,7 +1,7 @@
 #ifndef __OSIP_ADAPTER_H__
 #define __OSIP_ADAPTER_H__
 
-#include "adapter.h"
+#include "adapter/adapter.h"
 
 /**
  * OPUS audio frame duration of this device, unit: ms

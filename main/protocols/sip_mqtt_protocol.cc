@@ -1,6 +1,6 @@
 #include <esp_log.h>
 #include "sip_mqtt_protocol.h"
-#include "sip.h"
+#include "adapter/protocol.h"
 #include "application.h"
 #include <wifi_manager.h>
 #include "settings.h"

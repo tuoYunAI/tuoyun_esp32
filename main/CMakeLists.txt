@@ -29,9 +29,9 @@ set(SOURCES "audio/audio_codec.cc"
             "protocols/mqtt_protocol.cc"
             "protocols/websocket_protocol.cc"
             "protocols/sip_mqtt_protocol.cc"
-            "protocols/sip/adapter.cc"
-            "protocols/sip/osip_adapter.c"
-            "protocols/sip/session.c"
+            "protocols/adapter/adapter.cc"
+            "protocols/adapter/sip/osip_adapter.c"
+            "protocols/adapter/session/session.c"
             "mcp_server.cc"
             "system_info.cc"
             "application.cc"
@@ -45,10 +45,10 @@ set(SOURCES "audio/audio_codec.cc"
 set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "protocols")
 
 # Add osip library files
-file(GLOB OSIP_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/protocols/sip/osip/src/osipparser2/*.c)
+file(GLOB OSIP_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/protocols/adapter/sip/osip/src/osipparser2/*.c)
 list(APPEND SOURCES ${OSIP_SOURCES})
-list(APPEND INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/protocols/sip)
-list(APPEND INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/protocols/sip/osip/include)
+list(APPEND INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/protocols/adapter/sip)
+list(APPEND INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/protocols/adapter/sip/osip/include)
 
 # Add board common files
 list(APPEND SOURCES

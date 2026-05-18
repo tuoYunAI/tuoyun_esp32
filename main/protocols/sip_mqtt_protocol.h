@@ -1,7 +1,7 @@
 #ifndef SIP_MQTT_PROTOCOL_H
 #define SIP_MQTT_PROTOCOL_H
 #include "mqtt_protocol.h"
-#include "sip.h"
+#include "adapter/protocol.h"
 
 
 class SipMqttProtocol : public MqttProtocol {

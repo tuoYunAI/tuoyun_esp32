@@ -2,7 +2,7 @@
 #define __SIP_ADAPTER_H__
 
 
-#include "sip.h"
+#include "protocol.h"
 #include <ctype.h>
 
 

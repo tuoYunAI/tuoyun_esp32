@@ -6,7 +6,7 @@
 
 #define ADAPTER_LOG_TAG    "[SIP-ADAPTER]"
 #define LOG_LEVEL_ENABLED  LOG_INFO_LEVEL
-#include "adapter.h"
+#include "adapter/adapter.h"
 
 
 #define SIP_VERSION "SIP/2.0"

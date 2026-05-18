@@ -1,4 +1,4 @@
-#include "sip.h"
+#include "../protocol.h"
 #include "session.h"
 #include "osip_adapter.h"
 #include "osipparser2/osip_list.h"
@@ -7,7 +7,7 @@
 
 #define ADAPTER_LOG_TAG        "[SESSION]"
 #define LOG_LEVEL_ENABLED      LOG_INFO_LEVEL
-#include "adapter.h"
+#include "../adapter.h"
 
 static void send_invite_ack();
 
