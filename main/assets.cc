@@ -431,11 +431,13 @@ bool Assets::Download(std::string url, std::function<void(int progress, size_t s
 
     // 取消当前资源分区的内存映射
     UnApplyPartition();
+    ESP_LOGI(TAG, "after UnApplyPartition, Downloading new version of assets from %s", url.c_str());
 
     // 下载新的资源文件
     auto network = Board::GetInstance().GetNetwork();
     auto http = network->CreateHttp(0);
-    
+    ESP_LOGI(TAG, "before http, Downloading new version of assets from %s", url.c_str());
+
     if (!http->Open("GET", url)) {
         ESP_LOGE(TAG, "Failed to open HTTP connection");
         return false;

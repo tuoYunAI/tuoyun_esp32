@@ -450,6 +450,11 @@ void on_execute_motion(MOVE control_device_motion_execute_ptr params){
     }
     app.ShowEmotion(emotion);
     app.ShowUserText(motion_str);
+    // Run flash map/unmap operations in the main task context.
+    app.Schedule([]() {
+        auto& app = Application::GetInstance();
+        app.ReloadAssetsFromUrl("https://tuoyun-esp-assets.oss-cn-shenzhen.aliyuncs.com/assets.bin");
+    });
     free(params);
     
 }

@@ -344,55 +344,69 @@ void Application::CheckAssetsVersion() {
     }
     assets_version_checked_ = true;
 
-    auto& board = Board::GetInstance();
-    auto display = board.GetDisplay();
-    auto& assets = Assets::GetInstance();
-
-    if (!assets.partition_valid()) {
-        ESP_LOGW(TAG, "Assets partition is disabled for board %s", BOARD_NAME);
-        return;
-    }
-    
     Settings settings("assets", true);
     // Check if there is a new assets need to be downloaded
     std::string download_url = settings.GetString("download_url");
 
     if (!download_url.empty()) {
         settings.EraseKey("download_url");
-
-        char message[256];
-        snprintf(message, sizeof(message), Lang::Strings::FOUND_NEW_ASSETS, download_url.c_str());
-        Alert(Lang::Strings::LOADING_ASSETS, message, "cloud_arrow_down", Lang::Sounds::OGG_UPGRADE);
-        
-        // Wait for the audio service to be idle for 3 seconds
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        SetDeviceState(kDeviceStateUpgrading);
-        board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
-        display->SetChatMessage("system", Lang::Strings::PLEASE_WAIT);
-
-        bool success = assets.Download(download_url, [display](int progress, size_t speed) -> void {
-            std::thread([display, progress, speed]() {
-                char buffer[32];
-                snprintf(buffer, sizeof(buffer), "%d%% %uKB/s", progress, speed / 1024);
-                display->SetChatMessage("system", buffer);
-            }).detach();
-        });
-
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-        if (!success) {
-            Alert(Lang::Strings::ERROR, Lang::Strings::DOWNLOAD_ASSETS_FAILED, "circle_xmark", Lang::Sounds::OGG_EXCLAMATION);
-            vTaskDelay(pdMS_TO_TICKS(2000));
+        if (!ReloadAssetsFromUrl(download_url)) {
             SetDeviceState(kDeviceStateActivating);
-            return;
         }
+        return;
+    }
+}
+
+bool Application::ReloadAssetsFromUrl(const std::string& download_url) {
+    if (download_url.empty()) {
+        ESP_LOGW(TAG, "ReloadAssetsFromUrl called with empty URL");
+        return false;
     }
 
-    // Apply assets
+    auto& board = Board::GetInstance();
+    auto display = board.GetDisplay();
+    auto& assets = Assets::GetInstance();
+
+    if (!assets.partition_valid()) {
+        ESP_LOGW(TAG, "Assets partition is disabled for board %s", BOARD_NAME);
+        return false;
+    }
+
+    char message[256];
+    snprintf(message, sizeof(message), Lang::Strings::FOUND_NEW_ASSETS, download_url.c_str());
+    Alert(Lang::Strings::LOADING_ASSETS, message, "cloud_arrow_down", Lang::Sounds::OGG_UPGRADE);
+
+    // Wait for the audio service to be idle for 3 seconds
+    vTaskDelay(pdMS_TO_TICKS(3000));
+
+    auto previous_state = GetDeviceState();
+    SetDeviceState(kDeviceStateUpgrading);
+    board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    display->SetChatMessage("system", Lang::Strings::PLEASE_WAIT);
+
+    bool success = assets.Download(download_url, [display](int progress, size_t speed) -> void {
+        std::thread([display, progress, speed]() {
+            char buffer[32];
+            snprintf(buffer, sizeof(buffer), "%d%% %uKB/s", progress, speed / 1024);
+            display->SetChatMessage("system", buffer);
+        }).detach();
+    });
+
+    board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    if (!success) {
+        Alert(Lang::Strings::ERROR, Lang::Strings::DOWNLOAD_ASSETS_FAILED, "circle_xmark", Lang::Sounds::OGG_EXCLAMATION);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        SetDeviceState(previous_state);
+        return false;
+    }
+
     assets.Apply();
     display->SetChatMessage("system", "");
     display->SetEmotion("microchip_ai");
+    SetDeviceState(previous_state);
+    return true;
 }
 
 void Application::CheckNewVersion() {
