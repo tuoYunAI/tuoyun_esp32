@@ -13,6 +13,7 @@ static void send_invite_ack();
 
 static void reject_invite_request(received_sip_message_ptr message, int status_code, const char *reason_phrase);
 static void reject_info_request(received_sip_message_ptr message, int status_code, const char *reason_phrase);
+static int power_on_register = 0;
 static register_param_t m_register_param = {
     .scenario = 1,
     .battery = 0,
@@ -87,7 +88,6 @@ void report_register_status(register_param_ptr  param){
     if (!param) return;
     m_register_param.battery = param->battery;
     m_register_param.network = param->network;
-    m_register_param.scenario = param->scenario;
     m_register_param.network.rssi = param->network.rssi;
     m_register_param.network.type = param->network.type;
 }
@@ -96,36 +96,36 @@ static sip_ret_t transmit_sip(char *message){
     if (!message){
         return RET_ERROR;
     }
-
+    sip_ret_t ret = RET_ERROR;
     void *root = adapter_create_json_object();
     adapter_put_json_string_value(root, "protocol", "SIP");
     adapter_put_json_string_value(root, "payload", message);
 
     char* json_string = adapter_serialize_json_to_string(root);
     if (json_string) {
-        adapter_transmit_mqtt_message(json_string);
+        ret = adapter_transmit_mqtt_message(json_string);
     }
 
     adapter_delete_json_object(root);
-    return RET_OK;
+    return ret;
 }
 
 sip_ret_t transmit_mcp_over_sip(const char *message){
     if (!message){
         return RET_ERROR;
     }
-
+    sip_ret_t ret = RET_ERROR;
     void *root = adapter_create_json_object();
     adapter_put_json_string_value(root, "protocol", "MCP");
     adapter_put_json_string_value(root, "payload", message);
 
     char* json_string = adapter_serialize_json_to_string(root);
     if (json_string) {
-        adapter_transmit_mqtt_message(json_string);
+        ret = adapter_transmit_mqtt_message(json_string);
     }
 
     adapter_delete_json_object(root);
-    return RET_OK;
+    return ret;
 }
 
 
@@ -138,6 +138,9 @@ static void proc_response_register(MOVE received_sip_message_ptr  message){
         }
         if (is_response_ok(message)){
             m_session_state.last_keepalive_ms = adapter_get_system_ms();
+            m_session_state.last_register_ms = m_session_state.last_keepalive_ms;
+            power_on_register = 1; // 只在第一次注册时携带开机注册标志，之后的注册都不携带
+            LOG_INFO("REGISTER successful");
         }
         m_session_state.session_status = SESSION_STATUS_IDLE;
         m_session_state.last_keepalive_ms = m_session_state.last_req_message_ms;
@@ -335,13 +338,6 @@ static void proc_request_invite(MOVE received_sip_message_ptr  message){
         memcpy(g_audio_dec_media_param.nonce, sdp.nonce, sizeof(g_audio_dec_media_param.nonce));
         memcpy(g_audio_dec_media_param.aes_key, sdp.aes_key, sizeof(g_audio_dec_media_param.aes_key));
 
-        if (adapter_start_traffic_tunnel(&g_audio_dec_media_param) != 0) {
-            LOG_INFO("Failed to start traffic tunnel for INVITE request");
-            break;
-        }
-
-        transmit_sip(out_msg);
-
         m_session_state.session_status = SESSION_STATUS_IN_CALL;
         m_session_state.last_keepalive_ms = adapter_get_system_ms();
         m_session_state.last_traffic_ms = m_session_state.last_keepalive_ms;
@@ -351,6 +347,12 @@ static void proc_request_invite(MOVE received_sip_message_ptr  message){
         m_session_state.session_id[sizeof(m_session_state.session_id) - 1] = '\0';
         m_session_state.invite_200_ok_resp_message = dialog_anchor;
         dialog_anchor = NULL;
+        if (adapter_start_traffic_tunnel(&g_audio_dec_media_param) != 0) {
+            LOG_INFO("Failed to start traffic tunnel for INVITE request");
+            break;
+        }
+
+        transmit_sip(out_msg);
 
         on_call_established(m_session_state.session_id, &g_audio_dec_media_param);
         ret = RET_OK;
@@ -590,7 +592,6 @@ static void proc_request_info(MOVE received_sip_message_ptr message){
     return;
 }
 
-static int power_on_register = 0;
 void send_register(register_param_ptr param){
 
     if(!param){
@@ -600,7 +601,7 @@ void send_register(register_param_ptr param){
     LOG_INFO("Sending REGISTER request");
     adapter_lock_sip_mutex();
     param->scenario = power_on_register == 0 ? 0 : 1;
-    power_on_register = 1; // 只在第一次注册时携带开机注册标志，之后的注册都不携带  
+    
     do{
         if (m_session_state.session_status > SESSION_STATUS_REGISTERING){
             break;
@@ -625,11 +626,14 @@ void send_register(register_param_ptr param){
             break;
         }
 
-        m_session_state.session_status = SESSION_STATUS_REGISTERING;
-        m_session_state.last_req_message_ms = ms;
-        m_session_state.last_req_message_seq = m_session_state.seq;
-        transmit_sip(message);
-
+        
+        ret = transmit_sip(message);
+        if (ret == RET_OK){
+            LOG_INFO("REGISTER request sent successfully, scenario: %d", param->scenario);
+            m_session_state.session_status = SESSION_STATUS_REGISTERING;
+            m_session_state.last_req_message_ms = ms;
+            m_session_state.last_req_message_seq = m_session_state.seq;
+        }
         m_session_state.seq++;
         free_sip_message(message);
     }while (0);
@@ -903,7 +907,6 @@ void handle_received_sip(const char *data, size_t len)
                 // 服务器发起会话
                 proc_request_invite(msg_info);
                 
-
             } else if (strcmp(msg_info->method, "MESSAGE") == 0) {
                 // 服务器下发事件
                 proc_request_message(msg_info);
@@ -923,10 +926,13 @@ void handle_received_sip(const char *data, size_t len)
                 proc_response_register(msg_info);
             } else if (strcmp(msg_info->method, "INVITE") == 0) {
                 proc_response_invite(msg_info);
+                m_session_state.last_register_ms = adapter_get_system_ms();
             } else if (strcmp(msg_info->method, "INFO") == 0) {
                 proc_response_info(msg_info);
+                m_session_state.last_register_ms = adapter_get_system_ms();
             }  else if (strcmp(msg_info->method, "BYE") == 0) {
                 proc_response_bye(msg_info);
+                m_session_state.last_register_ms = adapter_get_system_ms();
             } else {
                 free(msg_info);
             }
@@ -1064,7 +1070,10 @@ void mqtt_proc_task(void *param){
 }
 
 void proc_register_task(void *param){
-    send_register(&m_register_param);
+    uint32_t time = adapter_get_system_ms();
+    if (time - m_session_state.last_register_ms >= REGISTER_EXPIRE_SECOND * 1000){
+        send_register(&m_register_param);
+    }    
 }
 
 void init_session_module(const char* uid, const char* device_ip){
@@ -1088,5 +1097,5 @@ void init_session_module(const char* uid, const char* device_ip){
 #endif
 
     adapter_start_periodic_task(session_checking, 1000, 1024*8, NULL);
-    adapter_start_periodic_task(proc_register_task, 60 * 1000, 1024*8, NULL);
+    adapter_start_periodic_task(proc_register_task, 10 * 1000, 1024*8, NULL);
 }

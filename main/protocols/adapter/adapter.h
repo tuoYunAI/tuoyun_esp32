@@ -194,7 +194,7 @@ void adapter_clear_traffic_tunnel();
  * @param  message: Pointer to the message string to be sent
  * @return void
  */
-void adapter_transmit_mqtt_message(char* message);
+sip_ret_t adapter_transmit_mqtt_message(char* message);
 
 
 /**

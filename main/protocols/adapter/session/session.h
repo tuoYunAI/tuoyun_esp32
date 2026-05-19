@@ -22,6 +22,7 @@ typedef struct {
     uint32_t seq;
     uint32_t last_keepalive_ms; // 上次命令时间ms, 包括invite的INVITE、ACK、BYE、REGISTER消息
     uint32_t last_req_message_ms;  // 上次发出消息时间 ms
+    uint32_t last_register_ms;     // 上次注册时间 ms
     int last_req_message_seq; // 上次发出消息seq
     uint32_t last_traffic_ms;  // 上次的语音流量的时间ms, 用于判断通话是否活跃
     received_sip_message_ptr invite_200_ok_resp_message;

@@ -1,5 +1,5 @@
-#ifndef __SIP_PROTOCOL_H__
-#define __SIP_PROTOCOL_H__
+#ifndef __SIP_PROTOCOLS_H__
+#define __SIP_PROTOCOLS_H__
 
 #include <stddef.h>
 #include <stdint.h>

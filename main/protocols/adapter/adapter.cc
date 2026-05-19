@@ -323,9 +323,10 @@ void adapter_clear_traffic_tunnel(){
 }
 
 
-void adapter_transmit_mqtt_message(char* message){
+sip_ret_t adapter_transmit_mqtt_message(char* message){
     auto& app = Application::GetInstance();
     ((SipMqttProtocol*) app.GetProtocol())->TransmitSIPMessage(std::string(message));
+	return RET_OK;
 }
 
 void on_call_established(char* session_id, media_parameter_ptr media_param){
