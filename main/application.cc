@@ -355,6 +355,16 @@ void Application::CheckAssetsVersion() {
         }
         return;
     }
+
+    auto& assets = Assets::GetInstance();
+    if (!assets.partition_valid()) {
+        ESP_LOGW(TAG, "Assets partition is disabled for board %s", BOARD_NAME);
+        return;
+    }
+
+    if (!assets.Apply()) {
+        ESP_LOGW(TAG, "Failed to apply assets on startup");
+    }
 }
 
 bool Application::ReloadAssetsFromUrl(const std::string& download_url) {
