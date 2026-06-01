@@ -11,6 +11,20 @@
 
 static void send_invite_ack();
 
+static void log_json_payload(const char *tag, const char *payload, size_t len)
+{
+    if (!payload || len == 0) {
+        LOG_INFO("%s payload is empty", tag ? tag : "JSON");
+        return;
+    }
+
+    LOG_INFO("%s payload (%u bytes): %.*s",
+             tag ? tag : "JSON",
+             (unsigned int)len,
+             (int)len,
+             payload);
+}
+
 static void reject_invite_request(received_sip_message_ptr message, int status_code, const char *reason_phrase);
 static void reject_info_request(received_sip_message_ptr message, int status_code, const char *reason_phrase);
 static register_param_t m_register_param = {
@@ -425,6 +439,8 @@ static void reject_info_request(received_sip_message_ptr message, int status_cod
 static void proc_request_message(MOVE received_sip_message_ptr  message){
 
     if (message->body_length > 0) {
+        log_json_payload("MESSAGE", message->message_body, message->body_length);
+
         // 解析 JSON
         void *received_msg = NULL;
         dcp_cmd_type_t cmd_type = parse_dcp_message(message->message_body, &received_msg);
@@ -525,6 +541,7 @@ static void proc_request_info(MOVE received_sip_message_ptr message){
     adapter_unlock_sip_mutex();
 
     if (message->body_length > 0) {
+        log_json_payload("INFO", message->message_body, message->body_length);
 
         // 解析 JSON
         void *received_msg = NULL;
@@ -893,6 +910,8 @@ sip_ret_t send_stop_listening(audio_input_stop_reason_t reason){
 
 void handle_received_sip(const char *data, size_t len)
 {
+    log_json_payload("SIP", data, len);
+
     received_sip_message_ptr msg_info = NULL;
     sip_ret_t result = sip_parse_incoming_message(data, len, &msg_info);
 
@@ -959,6 +978,8 @@ void handle_received_mqtt_message(const char *data, size_t len){
 
     adapter_unlock_sip_list_mutex();
 #else
+    log_json_payload("MQTT", data, len);
+
     void *root = adapter_parse_json_string((char *)data);
     if(root != NULL){
         char protocol[10] = {0};
@@ -1044,6 +1065,8 @@ void mqtt_proc_task(void *param){
 
         if (msg) {
             // 处理接收到的消息
+            log_json_payload("mqtt_proc_task MQTT", (char *)msg, strlen((char *)msg));
+
             void *root = adapter_parse_json_string((char *)msg);
             if(root != NULL){
                 char protocol[10] = {0};

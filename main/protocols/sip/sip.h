@@ -246,6 +246,7 @@ typedef enum{
 
 typedef struct{
     device_motion_t action;
+    char action_text[32]; // Raw action string from server, e.g. "thinking"
     device_motion_priority_t priority;
     int repeat; // Number of times to repeat the motion, 0 means no repeat, -1 means repeat indefinitely until interrupted
     float speed; // Speed of the motion, 0.5 means half speed, 1 means normal speed, 2 means double speed, etc.

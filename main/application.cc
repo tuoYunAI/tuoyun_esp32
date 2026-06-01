@@ -456,12 +456,12 @@ void Application::CheckNewVersion() {
         retry_count = 0;
         retry_delay = 10; // Reset retry delay
 
-        if (ota_->HasNewVersion()) {
-            if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
-                return; // This line will never be reached after reboot
-            }
-            // If upgrade failed, continue to normal operation
-        }
+        // if (ota_->HasNewVersion()) {
+        //     if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
+        //         return; // This line will never be reached after reboot
+        //     }
+        //     // If upgrade failed, continue to normal operation
+        // }
 
         // No new version, mark the current version as valid
         ota_->MarkCurrentVersionValid();

@@ -398,65 +398,67 @@ static const char* motion_to_emotion(control_device_motion_execute_ptr params) {
         return "neutral";
     }
 
-    switch (params->action)
-    {
-    case NOD:
-        return "happy";
-    case SHAKE_HEAD:
-        return "angry";
-    case DANCE:
-        return "laughing";
-    case WAVE:
-        return "winking";
-    case EMOTION:
-        return "happy";
-    case CUSTOM:
-        return "neutral";
-    default:
+    const char* emote = params->action_text;
+    if (emote[0] == '\0') {
         return "neutral";
     }
+
+    static const char* kSupportedEmotes[] = {
+        "happy", "laughing", "funny", "loving", "embarrassed", "confident", "delicious",
+        "sad", "crying", "sleepy", "silly", "angry", "surprised", "shocked",
+        "thinking", "winking", "relaxed", "confused", "neutral", "idle"
+    };
+
+    for (size_t i = 0; i < sizeof(kSupportedEmotes) / sizeof(kSupportedEmotes[0]); ++i) {
+        if (strcmp(emote, kSupportedEmotes[i]) == 0) {
+            return emote;
+        }
+    }
+
+    return "neutral";
 }
 
 void on_execute_motion(MOVE control_device_motion_execute_ptr params){
     if (params == nullptr) {
         return;
     }
+    const char* action_text = params->action_text[0] != '\0' ? params->action_text : "";
+    LOG_INFO("on_execute_motion action=%s, repeat=%d, speed=%.2f", action_text[0] ? action_text : "<empty>", params->repeat, (double)params->speed);
+
     auto& app = Application::GetInstance();
     std::string motion_str;
-    const char* emotion = motion_to_emotion(params);
-    switch (params->action)
-    {
-    case NOD:
-        motion_str = "motion: nod";
-        break;
-    case SHAKE_HEAD:
-        motion_str = "motion: shake";
-        break;
-    case DANCE:
-        motion_str = "motion: dance";
-        break;
-    case WAVE:
-        motion_str = "motion: wave";
-        break;
-    case EMOTION:
-        motion_str = "motion: emotion";
-        break;
-    case CUSTOM:
-        motion_str = "motion: custom";
-        break;
-    default:
-        motion_str = "motion: unknown";
-        break;
+    std::string assets_url;
+
+    if (strncmp(action_text, "asset:", 6) == 0) {
+        const char* url = strstr(action_text, "https://");
+        if (url == nullptr) {
+            url = strstr(action_text, "http://");
+        }
+        if (url != nullptr && url[0] != '\0') {
+            assets_url = url;
+            LOG_INFO("asset reload url=%s", assets_url.c_str());
+        } else {
+            LOG_WARN("asset action received but no valid url: %s", action_text);
+        }
+        if (!assets_url.empty()) {
+            app.Schedule([assets_url]() {
+                auto& app = Application::GetInstance();
+                app.ReloadAssetsFromUrl(assets_url);
+            });
+        }
     }
-    app.ShowEmotion(emotion);
-    app.ShowUserText(motion_str);
-    // Run flash map/unmap operations in the main task context.
-    app.Schedule([]() {
-        auto& app = Application::GetInstance();
-        app.ReloadAssetsFromUrl("https://tuoyun-esp-assets.oss-cn-shenzhen.aliyuncs.com/assets.bin");
-    });
+    else {
+        const char* emotion = motion_to_emotion(params);
+        if (action_text[0]) {
+            motion_str = "motion: ";
+            motion_str += action_text;
+        } else {
+            motion_str = "motion: unknown";
+        }
+        app.ShowEmotion(emotion);
+        app.ShowUserText(motion_str);
+    }
     free(params);
-    
 }
 
 void on_stop_motion(MOVE control_device_motion_stop_ptr params){
