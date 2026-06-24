@@ -120,12 +120,16 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 改为接入拓云�
 
 ##### 3.2 修改配置文件
 
-在工程的 `Kconfig.projbuild` 文件中添加以下配置项(本工程已经有这些配置项，修改即可)：
+在工程的 `Kconfig.projbuild` 文件中配置以下参数。本工程已经内置这些选项，您只需要打开后按平台数据填写即可。
 
-- 产品型号
-- 固件编号
-- 主板型号
-- 设备厂商（需要联系拓云官方人员获取）
+| 配置项 | 含义 | 获取方式 |
+| --- | --- | --- |
+| 产品型号 | 设备对应的玩具外观型号 | 登录 https://agent.lovaiot.com，进入【型号管理】>【玩具型号】，在列表中找到对应产品，读取【编码】字段 |
+| 固件编号 | 设备当前使用的固件版本编号 | 登录 https://agent.lovaiot.com，进入【型号管理】>【固件】，在列表中找到对应固件，读取【编码】字段 |
+| 主板型号 | 设备控制板的型号编码 | 登录 https://agent.lovaiot.com，进入【型号管理】>【控制板型号】，在列表中找到对应控制板，读取【编码】字段 |
+| 设备厂商 | 拓云平台为贵公司分配的组织 UID | 登录 https://agent.lovaiot.com，进入【企业信息】，查看【组织UID】字段 |
+
+填写时请确保本地配置与平台后台保持一致，否则设备可能无法正确完成注册、绑定或 OTA 更新。
 
 ![Kconfig配置示例](docs/tuoyun/modify_kconfig1.png)
 
@@ -133,17 +137,24 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 改为接入拓云�
 
 ##### 3.3 修改 OTA 地址
 
+在同一配置文件或 `menuconfig` 中修改 OTA 服务地址，确保设备下载固件时能够访问到正确的升级服务器。
+
 ![Kconfig配置示例](docs/tuoyun/modify_kconfig3.png)
 
-也可以在 `menuconfig` 中进行配置。如图所示
+也可以在 `menuconfig` 中进行配置，如图所示：
 ![menuconfig配置示例](docs/tuoyun/modify_kconfig4.png)
 
 ##### 3.4 修改蓝牙配置
 
-为了支持小程序蓝牙配网，需要修改工程里的蓝牙配置，具体步骤如下：
-运行 idf.py menuconfig,选择 Component config 然后选择 Bluetooth ，
-打开 Bluetooth，并设置 Host 为 NimBLE - BLE only
-具体如下图所示：
+为了支持小程序蓝牙配网，需要修改工程里的蓝牙配置，步骤如下：
+
+1. 运行 `idf.py menuconfig`。
+2. 进入 `Component config`。
+3. 选择 `Bluetooth`。
+4. 打开 Bluetooth 功能，并将 Host 设置为 `NimBLE - BLE only`。
+
+配置完成后，蓝牙配网能力即可正常工作。具体如下图所示：
+
 ![蓝牙配置](docs/tuoyun/ble1.png)
 ![蓝牙配置](docs/tuoyun/ble2.png)
 ![蓝牙配置](docs/tuoyun/ble3.png)
