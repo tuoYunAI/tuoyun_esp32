@@ -122,11 +122,21 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 改为接入拓云�
 
 在工程的 `Kconfig.projbuild` 文件中添加以下配置项(本工程已经有这些配置项，修改即可)：
 
-- 产品型号
-- 固件编号
-- 主板型号
-- 设备厂商（需要联系拓云官方人员获取）
+- 产品型号：
 
+ 登录https://agent.lovaiot.com后, 在左侧菜单中，进入【型号管理】> 【玩具型号】页面的表中, 选择对应的产品, 查看【编码】字段内容
+  
+- 固件编号：
+  登录https://agent.lovaiot.com后, 在左侧菜单中，进入【型号管理】> 【固件】页面的表中, 选择对应
+ 的固件, 查看【编码】字段内容
+- 主板型号：
+ 登录https://agent.lovaiot.com后, 在左侧菜单中，进入【型号管理】> 【控制板型号】页面的表中, 选择对应
+ 的控制板, 查看【编码】字段内容
+
+- 设备厂商：
+ 贵公司在拓云平台的UID信息, 由平台提供。
+ 登录https://agent.lovaiot.com后, 在左侧菜单中，进入【企业信息】页面中, 查看【组织UID】字段内容,
+ 
 ![Kconfig配置示例](docs/tuoyun/modify_kconfig1.png)
 
 ![Kconfig配置示例](docs/tuoyun/modify_kconfig2.png)
