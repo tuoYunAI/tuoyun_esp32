@@ -110,7 +110,7 @@ tuoyun_esp32 是北京拓云为了让原来接入 xiaozhi.me 改为接入拓云�
 
 ![添加固件](docs/tuoyun/add_firmware.png)
 
-#### 3. ESP32 固件修改
+#### 3. ESP32 固件烧录
 
 拓云服务端完全兼容小智协议，并在此基础上进行了功能更新和扩展。
 
