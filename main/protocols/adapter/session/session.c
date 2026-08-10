@@ -813,6 +813,7 @@ sip_ret_t send_start_listening(listening_mode_t mode){
     };
 
     LOG_INFO("Sending listening start, mode=%d", mode);
+    adapter_lock_sip_mutex();
     sip_ret_t ret = RET_OK;
     do{
         if (m_session_state.session_status != SESSION_STATUS_IN_CALL){
@@ -856,6 +857,7 @@ sip_ret_t send_stop_listening(audio_input_stop_reason_t reason){
 
     event_audio_input_state_stop_t param = {reason};
     LOG_INFO("Sending listening stop");
+    adapter_lock_sip_mutex();
     sip_ret_t ret = RET_OK;
     do{
 
