@@ -159,6 +159,8 @@ typedef struct downlink_sdp_parameter{
    * AES 128位密钥
    */ 
   uint8_t aes_key[16];
+
+  int full_duplex; // 是否支持全双工，0表示不支持，1表示支持
 }downlink_sdp_parameter_t, *downlink_sdp_parameter_ptr;
 
 

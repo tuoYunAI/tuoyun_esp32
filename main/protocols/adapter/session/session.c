@@ -306,7 +306,7 @@ static void proc_request_invite(MOVE received_sip_message_ptr  message){
             .wake_up_word = NULL,
             .support_frame_aggregation = SESSION_SUPPORT_FRAME_AGGREGATION,
             .support_redundant = 0,
-            .support_full_duplex = SESSION_SUPPORT_FULL_DUPLEX
+            .support_full_duplex = sdp.full_duplex
         };
         strncpy(sdp_param.session_id, sdp.session_id, sizeof(sdp_param.session_id) - 1);
         if (build_invite_200_ok_response(message,
@@ -666,7 +666,8 @@ sip_ret_t init_call(const char* wake_up_word){
             .cbr = SESSION_OPUS_CBR,
             .frame_gap = SESSION_AUDIO_FRAME_GAP,
             .wake_up_word = wake_up_word,
-            .support_frame_aggregation = SESSION_SUPPORT_FRAME_AGGREGATION
+            .support_frame_aggregation = SESSION_SUPPORT_FRAME_AGGREGATION,
+            .support_full_duplex = SESSION_SUPPORT_FULL_DUPLEX
         };
 
         sip_invite_param_t invite = {
