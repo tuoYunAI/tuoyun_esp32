@@ -443,10 +443,10 @@ static sip_ret_t make_sdp(uplink_sdp_parameter_ptr param, char *dst, size_t dst_
         "c=IN IP4 0.0.0.0\r\n"
         "t=0 0\r\n"
         "m=audio 0 UDP/AI-AUDIO\r\n"
-        "a=lovaiot-uplink:codec=%s,frame=%d,sample_rate=%d,channels=%d,mcp=%d%s\r\n"
+        "a=lovaiot-uplink:fd=%d,codec=%s,frame=%d,sample_rate=%d,channels=%d,mcp=%d%s\r\n"
         "a=lovaiot-downlink:cbr=%d,frame_gap=%d,aggregation=%d,redundant=%d\r\n",
         param->uid, param->session_id, version, 
-        param->codec, param->frame_duration_ms, param->sample_rate, param->channels, param->support_mcp ? 1 : 0, wake_word_part,
+        param->support_full_duplex, param->codec, param->frame_duration_ms, param->sample_rate, param->channels, param->support_mcp ? 1 : 0, wake_word_part,
         param->cbr ? 1 : 0, param->frame_gap, param->support_frame_aggregation ? 1 : 0, param->support_redundant ? 1 : 0    
     );
     return (n > 0 && (size_t)n < dst_sz) ? RET_OK : RET_ERROR;

@@ -107,6 +107,8 @@ typedef struct uplink_sdp_parameter {
   int support_frame_aggregation;
 
   int support_redundant; // 是否支持冗余发送，0表示不支持，1表示支持
+
+  int support_full_duplex; // 是否支持全双工，0表示不支持，1表示支持
 } uplink_sdp_parameter_t, *uplink_sdp_parameter_ptr;
 
 

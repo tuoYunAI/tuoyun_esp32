@@ -23,7 +23,7 @@ extern "C" {
 #define SESSION_OPUS_CBR                       0       //opus是否使用cbr编码
 #define SESSION_AUDIO_FRAME_GAP                55      //音频帧间隔ms, 需要比frame_duration小
 #define SESSION_SUPPORT_FRAME_AGGREGATION      0       //是否支持帧聚合，开启后如果服务端发送的帧将把3个帧放在一个UDP中下发，减少处理开销和丢包率，但会增加一点点编码延迟
-
+#define SESSION_SUPPORT_FULL_DUPLEX            1       //是否支持全双工
 
 
 typedef enum {
