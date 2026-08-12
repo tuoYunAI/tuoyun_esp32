@@ -81,6 +81,7 @@ void SipMqttProtocol::SendStartListening(ListeningMode mode) {
     if (send_start_listening(message) != RET_OK) {
         ESP_LOGE(TAG, "Failed to send listening start, mode=%d", message);
     }
+    ESP_LOGI(TAG, "Sent listening start, mode=%d", message);
 }
 
 void SipMqttProtocol::SendStopListening() {
