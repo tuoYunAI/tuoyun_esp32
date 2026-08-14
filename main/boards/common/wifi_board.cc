@@ -239,7 +239,7 @@ void WifiBoard::EnterWifiConfigMode() {
         return;
     }
 
-    if (state != kDeviceStateStarting) {
+    if (state != kDeviceStateStarting && state != kDeviceStateActivating) {
         ESP_LOGE(TAG, "EnterWifiConfigMode called but device state is not starting or speaking, device state: %d", state);
         return;
     }

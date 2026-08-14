@@ -78,11 +78,16 @@ void SipMqttProtocol::SendStartListening(ListeningMode mode) {
         message = LISTENING_MODE_MANUAL_STOP;
     }
 
-    send_start_listening(message);
+    if (send_start_listening(message) != RET_OK) {
+        ESP_LOGE(TAG, "Failed to send listening start, mode=%d", message);
+    }
+    ESP_LOGI(TAG, "Sent listening start, mode=%d", message);
 }
 
 void SipMqttProtocol::SendStopListening() {
-    send_stop_listening(AUDIO_INPUT_STOP_REASON_NONE);
+    if (send_stop_listening(AUDIO_INPUT_STOP_REASON_NONE) != RET_OK) {
+        ESP_LOGE(TAG, "Failed to send listening stop");
+    }
 }
 
 

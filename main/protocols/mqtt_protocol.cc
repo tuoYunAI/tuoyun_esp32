@@ -180,7 +180,12 @@ bool MqttProtocol::SendText(const std::string& text) {
 
 bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     std::lock_guard<std::mutex> lock(channel_mutex_);
+    auto state = Application::GetInstance().GetDeviceState();
+    bool speaking = state == kDeviceStateSpeaking;
+    const char* state_name = speaking ? "speaking" :
+        (state == kDeviceStateListening ? "listening" : "other");
     if (udp_ == nullptr) {
+        ESP_LOGE(TAG, "Cannot send audio: state=%s, UDP channel is not open", state_name);
         return false;
     }
 
@@ -200,7 +205,13 @@ bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
         ESP_LOGE(TAG, "Failed to encrypt audio data");
         return false;
     }
-    return udp_->Send(encrypted) > 0;
+    int sent = udp_->Send(encrypted);
+    if (sent <= 0) {
+        ESP_LOGE(TAG, "Failed to send UDP audio: state=%s, sequence=%lu",
+            state_name, local_sequence_);
+        return false;    
+    }
+    return true;
 }
 
 void MqttProtocol::CloseAudioChannel(bool notify_server) {

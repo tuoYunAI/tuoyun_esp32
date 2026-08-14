@@ -8,8 +8,10 @@
 #include <esp_log.h>
 #include <esp_ota_ops.h>
 #include <esp_chip_info.h>
+#include <esp_mac.h>
 #include <esp_random.h>
 #include "esp_flash.h"
+#include "spi_flash_chip_driver.h"
 
 #define TAG "Board"
 
@@ -68,28 +70,23 @@ Led* Board::GetLed() {
     return &led;
 }
 std::string Board::GetBoardUniqueCode() {
-    
-    uint64_t chip_id = 0;
-    // 参数1: chip - 指向 Flash 芯片的句柄。
-    //        传 NULL 表示读取主 SPI Flash (即代码所在的 Flash)。
-    esp_err_t err = esp_flash_read_unique_chip_id(NULL, &chip_id);
+    static std::string unique_code;
+    if (!unique_code.empty()) {
+        return unique_code;
+    }
+
+    uint8_t mac[6] = {0};
+    esp_err_t err = esp_efuse_mac_get_default(mac);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to read chip ID: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to read eFuse MAC: %s", esp_err_to_name(err));
         return "";
     }
 
-    char chip_id_buf[17] = {0};
-    snprintf(chip_id_buf, sizeof(chip_id_buf), "%02x%02x%02x%02x%02x%02x%02x%02x", 
-    (u_int8_t)(chip_id>>56 & 0xFF),
-    (u_int8_t)((chip_id>>48) & 0xFF), 
-    (u_int8_t)((chip_id>>40) & 0xFF), 
-    (u_int8_t)((chip_id>>32) & 0xFF),
-    (u_int8_t)((chip_id>>24) & 0xFF), 
-    (u_int8_t)((chip_id>>16) & 0xFF), 
-    (u_int8_t)((chip_id>>8) & 0xFF), 
-    (u_int8_t)(chip_id & 0xFF));
-
-    return std::string(chip_id_buf);
+    char mac_buf[17] = {0};
+    snprintf(mac_buf, sizeof(mac_buf), "0000%02x%02x%02x%02x%02x%02x",
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    unique_code = mac_buf;
+    return unique_code;
 }
 std::string Board::GetSystemInfoJson() {
     /* 

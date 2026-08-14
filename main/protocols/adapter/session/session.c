@@ -305,7 +305,8 @@ static void proc_request_invite(MOVE received_sip_message_ptr  message){
             .frame_gap = SESSION_AUDIO_FRAME_GAP,
             .wake_up_word = NULL,
             .support_frame_aggregation = SESSION_SUPPORT_FRAME_AGGREGATION,
-            .support_redundant = 0
+            .support_redundant = 0,
+            .support_full_duplex = sdp.full_duplex
         };
         strncpy(sdp_param.session_id, sdp.session_id, sizeof(sdp_param.session_id) - 1);
         if (build_invite_200_ok_response(message,
@@ -665,7 +666,8 @@ sip_ret_t init_call(const char* wake_up_word){
             .cbr = SESSION_OPUS_CBR,
             .frame_gap = SESSION_AUDIO_FRAME_GAP,
             .wake_up_word = wake_up_word,
-            .support_frame_aggregation = SESSION_SUPPORT_FRAME_AGGREGATION
+            .support_frame_aggregation = SESSION_SUPPORT_FRAME_AGGREGATION,
+            .support_full_duplex = SESSION_SUPPORT_FULL_DUPLEX
         };
 
         sip_invite_param_t invite = {
@@ -811,6 +813,7 @@ sip_ret_t send_start_listening(listening_mode_t mode){
     };
 
     LOG_INFO("Sending listening start, mode=%d", mode);
+    adapter_lock_sip_mutex();
     sip_ret_t ret = RET_OK;
     do{
         if (m_session_state.session_status != SESSION_STATUS_IN_CALL){
@@ -854,6 +857,7 @@ sip_ret_t send_stop_listening(audio_input_stop_reason_t reason){
 
     event_audio_input_state_stop_t param = {reason};
     LOG_INFO("Sending listening stop");
+    adapter_lock_sip_mutex();
     sip_ret_t ret = RET_OK;
     do{
 
