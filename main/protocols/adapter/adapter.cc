@@ -4,8 +4,11 @@
 #include <sys/time.h>
 #include <cJSON.h>
 #include <cstdarg>
+#include <cstring>
+#include <string>
 #include "application.h"
 #include "assets/lang_config.h"
+#include "settings.h"
 #include "sip_mqtt_protocol.h"
 
 #include <esp_log.h>
@@ -375,30 +378,89 @@ void on_set_device_mode(MOVE control_device_mode_set_ptr params){
     switch (params->mode)
     {
     case EXPLANATION:
-        mode_str = "mode: explanation";
+        mode_str = "模式：设备讲解";
         break;
     case INTERACTION:
-        mode_str = "mode: interaction";
+        mode_str = "模式：设备互动";
         break;
     case DUO:
-        mode_str = "mode: duo";
+        mode_str = "模式：人机互动";
         break;
     case HUMAN_AGENT:
-        mode_str = "mode: human_agent";
+        mode_str = "模式：真人直播";
         break;
     default:        
-        mode_str = "mode: unknown";
+        mode_str = "模式：未知";
         break;
     }
     app.ShowUserText(mode_str);
     free(params);
 }
 
+namespace {
+
+constexpr const char* kAssetActionPrefix = "asset:";
+
+bool is_manual_emotion(const char* action) {
+    static constexpr const char* kManualEmotions[] = {
+        "happy", "laughing", "funny", "loving", "embarrassed",
+        "confident", "delicious", "sad", "crying", "sleepy",
+        "silly", "angry", "surprised", "shocked", "thinking",
+        "winking", "relaxed", "confused", "neutral", "idle",
+    };
+    if (!action || action[0] == '\0') {
+        return false;
+    }
+    for (const char* emotion : kManualEmotions) {
+        if (std::strcmp(action, emotion) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool is_http_url(const std::string& url) {
+    return url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0;
+}
+
+} // namespace
+
 void on_execute_motion(MOVE control_device_motion_execute_ptr params){
     if (params == nullptr) {
         return;
     }
     auto& app = Application::GetInstance();
+    const char* raw_action = params->raw_action;
+
+    if (is_manual_emotion(raw_action)) {
+        ESP_LOGI(ADAPTER_LOG_TAG, "Show manual emotion: %s", raw_action);
+        app.ShowEmotion(raw_action);
+        free(params);
+        return;
+    }
+
+    if (std::strncmp(raw_action, kAssetActionPrefix, std::strlen(kAssetActionPrefix)) == 0) {
+        std::string download_url(raw_action + std::strlen(kAssetActionPrefix));
+        if (!is_http_url(download_url)) {
+            ESP_LOGE(ADAPTER_LOG_TAG, "Reject invalid asset URL: %s", download_url.c_str());
+            free(params);
+            return;
+        }
+
+        ESP_LOGI(ADAPTER_LOG_TAG, "Set asset download URL: %s", download_url.c_str());
+        {
+            Settings settings("assets", true);
+            settings.SetString("download_url", download_url);
+        }
+        app.Schedule([&app]() {
+            ESP_LOGW(ADAPTER_LOG_TAG, "Rebooting to apply the new emotion assets");
+            vTaskDelay(pdMS_TO_TICKS(1500));
+            app.Reboot();
+        });
+        free(params);
+        return;
+    }
+
     std::string motion_str;
     switch (params->action)
     {

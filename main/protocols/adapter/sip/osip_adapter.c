@@ -1589,6 +1589,9 @@ dcp_cmd_type_t parse_dcp_message(char* data, void** out_param){
         if (!motion_execute) {
             goto cleanup;
         }
+        if (action) {
+            strncpy(motion_execute->raw_action, action, sizeof(motion_execute->raw_action) - 1);
+        }
         motion_execute->action = parse_device_motion_value(action);
         motion_execute->priority = parse_device_motion_priority_value(priority);
         motion_execute->repeat = params ? adapter_get_json_int_value(params, "repeat", 0) : 0;

@@ -244,8 +244,13 @@ typedef enum{
     _INTERRUPT_ = 3 // Interrupt current motion and execute this motion immediately
 }device_motion_priority_t;
 
+#define DEVICE_MOTION_RAW_ACTION_MAX_LEN 1024
+
 typedef struct{
     device_motion_t action;
+    // Preserve the server action verbatim for backwards-compatible extended
+    // commands such as emotion names and "asset:<url>".
+    char raw_action[DEVICE_MOTION_RAW_ACTION_MAX_LEN];
     device_motion_priority_t priority;
     int repeat; // Number of times to repeat the motion, 0 means no repeat, -1 means repeat indefinitely until interrupted
     float speed; // Speed of the motion, 0.5 means half speed, 1 means normal speed, 2 means double speed, etc.
