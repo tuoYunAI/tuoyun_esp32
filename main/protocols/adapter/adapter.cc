@@ -4,10 +4,13 @@
 #include <sys/time.h>
 #include <cJSON.h>
 #include <cstdarg>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include "application.h"
+#include "audio_codec.h"
 #include "assets/lang_config.h"
+#include "board.h"
 #include "settings.h"
 #include "sip_mqtt_protocol.h"
 
@@ -400,6 +403,7 @@ void on_set_device_mode(MOVE control_device_mode_set_ptr params){
 namespace {
 
 constexpr const char* kAssetActionPrefix = "asset:";
+constexpr const char* kVolumeActionPrefix = "volume:";
 
 bool is_manual_emotion(const char* action) {
     static constexpr const char* kManualEmotions[] = {
@@ -448,14 +452,40 @@ void on_execute_motion(MOVE control_device_motion_execute_ptr params){
         }
 
         ESP_LOGI(ADAPTER_LOG_TAG, "Set asset download URL: %s", download_url.c_str());
-        {
-            Settings settings("assets", true);
-            settings.SetString("download_url", download_url);
-        }
-        app.Schedule([&app]() {
+        app.Schedule([download_url, &app]() {
+            // MCP tools are also executed on the application task. NVS writes
+            // must not run on the SIP/MQTT task because its stack is in PSRAM
+            // and flash writes temporarily disable the cache.
+            {
+                Settings settings("assets", true);
+                settings.SetString("download_url", download_url);
+            }
+            ESP_LOGI(ADAPTER_LOG_TAG, "Asset download URL saved: %s", download_url.c_str());
             ESP_LOGW(ADAPTER_LOG_TAG, "Rebooting to apply the new emotion assets");
             vTaskDelay(pdMS_TO_TICKS(1500));
             app.Reboot();
+        });
+        free(params);
+        return;
+    }
+
+    if (std::strncmp(raw_action, kVolumeActionPrefix, std::strlen(kVolumeActionPrefix)) == 0) {
+        const char* volume_text = raw_action + std::strlen(kVolumeActionPrefix);
+        char* parse_end = nullptr;
+        const long parsed_volume = std::strtol(volume_text, &parse_end, 10);
+        if (volume_text[0] == '\0' || parse_end == nullptr || parse_end[0] != '\0' ||
+            parsed_volume < 0 || parsed_volume > 100) {
+            ESP_LOGE(ADAPTER_LOG_TAG, "Reject invalid volume action: %s", raw_action);
+            free(params);
+            return;
+        }
+
+        const int volume = static_cast<int>(parsed_volume);
+        ESP_LOGI(ADAPTER_LOG_TAG, "Set output volume: %d", volume);
+        app.Schedule([volume]() {
+            auto codec = Board::GetInstance().GetAudioCodec();
+            codec->SetOutputVolume(volume);
+            ESP_LOGI(ADAPTER_LOG_TAG, "Output volume applied: %d", volume);
         });
         free(params);
         return;
