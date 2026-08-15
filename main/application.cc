@@ -10,6 +10,7 @@
 #include "mcp_server.h"
 #include "assets.h"
 #include "settings.h"
+#include "audio/pcm_hex_dumper.h"
 
 #include <cstring>
 #include <esp_log.h>
@@ -450,6 +451,7 @@ void Application::CheckNewVersion() {
         // Activation code is shown to the user and waiting for the user to input
         if (ota_->HasActivationCode()) {
             // if the board can enter activation mode by itself, do it
+            ESP_LOGI(TAG, "Got Activation code");
             if(board.EnterActivationMode()){
                 return;
             }
@@ -828,6 +830,9 @@ void Application::HandleStateChangedEvent() {
             display->SetEmotion("neutral");
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(true);
+#if CONFIG_AEC_PCM_HEX_DUMP
+            PcmHexDumper::GetInstance().DumpWhenIdle();
+#endif
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
@@ -838,6 +843,10 @@ void Application::HandleStateChangedEvent() {
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
 
+#if CONFIG_AEC_PCM_HEX_DUMP
+            PcmHexDumper::GetInstance().Disarm();
+#endif
+
             // Make sure the audio processor is running
             if (!audio_service_.IsAudioProcessorRunning()) {
                 // For auto mode, wait for playback queue to be empty before enabling voice processing
@@ -846,11 +855,11 @@ void Application::HandleStateChangedEvent() {
                     audio_service_.WaitForPlaybackQueueEmpty();
                 }
                 
-                // Send the start listening command
-                protocol_->SendStartListening(listening_mode_);
                 audio_service_.EnableVoiceProcessing(true);
-                audio_service_.EnableWakeWordDetection(false);
             }
+
+            protocol_->SendStartListening(listening_mode_);
+            audio_service_.EnableWakeWordDetection(false);
 
             // Play popup sound after ResetDecoder (in EnableVoiceProcessing) has been called
             if (play_popup_on_listening_) {
@@ -861,11 +870,19 @@ void Application::HandleStateChangedEvent() {
         case kDeviceStateSpeaking:
             display->SetStatus(Lang::Strings::SPEAKING);
 
-            if (listening_mode_ != kListeningModeRealtime) {
-                audio_service_.EnableVoiceProcessing(false);
-                // Only AFE wake word can be detected in speaking mode
-                audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
+#if CONFIG_AEC_PCM_HEX_DUMP
+            // Ignore wake-up prompts and capture the first real double-talk window.
+            PcmHexDumper::GetInstance().Arm();
+#endif
+
+            // Keep the existing processor running so mic capture is continuous
+            // across listening -> speaking without another warmup period.
+            if (!audio_service_.IsAudioProcessorRunning()) {
+                audio_service_.EnableVoiceProcessing(true, false);
             }
+
+            // Only AFE wake word can be detected in speaking mode.
+            audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
             audio_service_.ResetDecoder();
             break;
         case kDeviceStateWifiConfiguring:

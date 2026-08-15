@@ -722,6 +722,28 @@ config USE_DEVICE_AEC
     help
         To work properly, device-side AEC requires a clean output reference path from the speaker signal and physical acoustic isolation between the microphone and speaker.
 
+config AEC_PCM_HEX_DUMP
+    bool "Capture AEC PCM channels as hexadecimal logs"
+    default y if BOARD_TYPE_ECHOEAR
+    default n
+    depends on USE_DEVICE_AEC && SPIRAM
+    help
+        Capture MIC, playback reference, AEC output, and upload PCM in PSRAM.
+        Capture starts after sustained playback and a post-AEC double-talk
+        candidate are detected, ignoring short notification prompts. After
+        capture completes, hexadecimal output is deferred until the device is
+        idle so diagnostics do not interfere with real-time audio. Disable this
+        option after diagnosis.
+
+config AEC_PCM_HEX_DUMP_SECONDS
+    int "AEC PCM capture duration (seconds)"
+    default 2
+    range 1 10
+    depends on AEC_PCM_HEX_DUMP
+    help
+        Number of seconds captured for each 16 kHz mono PCM stream. Four
+        channels require about 128 KB of PSRAM per second before hex encoding.
+
 config USE_SERVER_AEC
     bool "Enable Server-Side AEC (Unstable)"
     default n

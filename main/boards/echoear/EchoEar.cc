@@ -26,6 +26,31 @@
 
 #define TAG "EchoEar"
 
+namespace {
+
+AecTuningConfig CreateEchoEarAecTuningConfig() {
+    AecTuningConfig config;
+    config.processor_mode = AecProcessorMode::kFullDuplexHighPerformance;
+    config.filter_length = 4;
+    config.nlp_level = AecNlpLevel::kNormal;
+    config.agc_enabled = false;
+
+    config.input_gain_db = 30.0f;
+    config.software_reference_buffer_ms = 300;
+    config.software_reference_delay_ms = 25;
+    config.reference_burst_gap_ms = 120;
+
+    config.upload_gate_output_delay_frames = 2;
+    config.upload_gate_reference_active_rms = 250.0;
+    config.upload_gate_near_end_mic_rms = 180.0;
+    config.upload_gate_min_output_to_mic_ratio = 0.42;
+    config.upload_gate_min_mic_to_reference_ratio = 0.32;
+    config.upload_gate_near_end_hangover_frames = 3;
+    return config;
+}
+
+}  // namespace
+
 
 temperature_sensor_handle_t temp_sensor = NULL;
 static const st77916_lcd_init_cmd_t vendor_specific_init_yysj[] = {
@@ -627,6 +652,7 @@ public:
 
     virtual AudioCodec* GetAudioCodec() override
     {
+        static const AecTuningConfig aec_tuning_config = CreateEchoEarAecTuningConfig();
         static BoxAudioCodec audio_codec(
             i2c_bus_,
             AUDIO_INPUT_SAMPLE_RATE,
@@ -639,7 +665,9 @@ public:
             AUDIO_CODEC_PA_PIN,
             AUDIO_CODEC_ES8311_ADDR,
             AUDIO_CODEC_ES7210_ADDR,
-            AUDIO_INPUT_REFERENCE);
+            AUDIO_INPUT_REFERENCE,
+            AUDIO_INPUT_REFERENCE_SOFTWARE,
+            aec_tuning_config);
         return &audio_codec;
     }
 

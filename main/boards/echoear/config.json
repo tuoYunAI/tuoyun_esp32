@@ -5,6 +5,8 @@
             "name": "echoear",
              "sdkconfig_append": [
                  "CONFIG_USE_EMOTE_MESSAGE_STYLE=y",
+                 "CONFIG_USE_DEVICE_AEC=y",
+                 "CONFIG_AEC_PCM_HEX_DUMP=n",
                  "CONFIG_MMAP_FILE_NAME_LENGTH=32",
                  "CONFIG_FLASH_EXPRESSION_ASSETS=y"
              ]

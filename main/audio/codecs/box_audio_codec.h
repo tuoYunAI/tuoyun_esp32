@@ -5,7 +5,9 @@
 
 #include <esp_codec_dev.h>
 #include <esp_codec_dev_defaults.h>
+#include <cstdint>
 #include <mutex>
+#include <vector>
 
 
 class BoxAudioCodec : public AudioCodec {
@@ -21,7 +23,17 @@ private:
     esp_codec_dev_handle_t input_dev_ = nullptr;
     std::mutex data_if_mutex_;
 
+    bool software_reference_ = false;
+    size_t software_reference_delay_samples_ = 0;
+    std::vector<int16_t> reference_buffer_;
+    size_t reference_read_pos_ = 0;
+    size_t reference_size_ = 0;
+    int64_t reference_last_push_us_ = 0;
+    std::mutex reference_mutex_;
+
     void CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din);
+    void PushReference(const int16_t* data, size_t samples);
+    void ClearReference();
 
     virtual int Read(int16_t* dest, int samples) override;
     virtual int Write(const int16_t* data, int samples) override;
@@ -29,7 +41,9 @@ private:
 public:
     BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int output_sample_rate,
         gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
-        gpio_num_t pa_pin, uint8_t es8311_addr, uint8_t es7210_addr, bool input_reference);
+        gpio_num_t pa_pin, uint8_t es8311_addr, uint8_t es7210_addr, bool input_reference,
+        bool software_reference = false,
+        const AecTuningConfig& aec_tuning_config = kDefaultAecTuningConfig);
     virtual ~BoxAudioCodec();
 
     virtual void SetOutputVolume(int volume) override;

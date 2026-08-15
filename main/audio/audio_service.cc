@@ -1,4 +1,5 @@
 #include "audio_service.h"
+#include "pcm_hex_dumper.h"
 #include "system_info.h"
 #include <esp_log.h>
 #include <cstring>
@@ -74,6 +75,10 @@ void AudioService::Initialize(AudioCodec* codec) {
         decoder_frame_size_ = decoder_sample_rate_ / 1000 * OPUS_FRAME_DURATION_MS;
     }
     esp_opus_enc_config_t opus_enc_cfg = AS_OPUS_ENC_CONFIG();
+#if CONFIG_USE_DEVICE_AEC
+    // Server-side VAD needs the complete post-AEC stream for full-duplex barge-in.
+    opus_enc_cfg.enable_dtx = false;
+#endif
     ret = esp_opus_enc_open(&opus_enc_cfg, sizeof(esp_opus_enc_config_t), &opus_encoder_);
     if (opus_encoder_ == nullptr) {
         ESP_LOGE(TAG, "Failed to create audio encoder, error code: %d", ret);
@@ -82,6 +87,7 @@ void AudioService::Initialize(AudioCodec* codec) {
         encoder_duration_ms_ = OPUS_FRAME_DURATION_MS;
         esp_opus_enc_get_frame_size(opus_encoder_, &encoder_frame_size_, &encoder_outbuf_size_);
         encoder_frame_size_ = encoder_frame_size_ / sizeof(int16_t);
+        ESP_LOGI(TAG, "Opus encoder initialized, DTX: %s", opus_enc_cfg.enable_dtx ? "enabled" : "disabled");
     }
 
     if (codec->input_sample_rate() != 16000) {
@@ -229,6 +235,9 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
 }
 
 void AudioService::AudioInputTask() {
+    std::vector<int16_t> wake_word_buffer;
+    std::vector<int16_t> audio_processor_buffer;
+
     while (true) {
         EventBits_t bits = xEventGroupWaitBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING |
             AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING,
@@ -264,6 +273,42 @@ void AudioService::AudioInputTask() {
                 PushTaskToEncodeQueue(kAudioTaskTypeEncodeToTestingQueue, std::move(data));
                 continue;
             }
+        }
+
+        if ((bits & AS_EVENT_WAKE_WORD_RUNNING) && (bits & AS_EVENT_AUDIO_PROCESSOR_RUNNING)) {
+            size_t wake_word_samples = wake_word_->GetFeedSize();
+            size_t audio_processor_samples = audio_processor_->GetFeedSize();
+            if (wake_word_samples > 0 && audio_processor_samples > 0) {
+                std::vector<int16_t> data;
+                int samples = wake_word_samples < audio_processor_samples ? wake_word_samples : audio_processor_samples;
+                if (ReadAudioData(data, 16000, samples)) {
+                    size_t wake_word_required_size = wake_word_samples * codec_->input_channels();
+                    size_t audio_processor_required_size = audio_processor_samples * codec_->input_channels();
+
+                    wake_word_buffer.insert(wake_word_buffer.end(), data.begin(), data.end());
+                    audio_processor_buffer.insert(audio_processor_buffer.end(), data.begin(), data.end());
+
+                    while (wake_word_buffer.size() >= wake_word_required_size) {
+                        auto wake_word_data = std::vector<int16_t>(
+                            wake_word_buffer.begin(),
+                            wake_word_buffer.begin() + wake_word_required_size);
+                        wake_word_->Feed(wake_word_data);
+                        wake_word_buffer.erase(wake_word_buffer.begin(), wake_word_buffer.begin() + wake_word_required_size);
+                    }
+
+                    while (audio_processor_buffer.size() >= audio_processor_required_size) {
+                        auto audio_processor_data = std::vector<int16_t>(
+                            audio_processor_buffer.begin(),
+                            audio_processor_buffer.begin() + audio_processor_required_size);
+                        audio_processor_->Feed(std::move(audio_processor_data));
+                        audio_processor_buffer.erase(audio_processor_buffer.begin(), audio_processor_buffer.begin() + audio_processor_required_size);
+                    }
+                    continue;
+                }
+            }
+        } else {
+            wake_word_buffer.clear();
+            audio_processor_buffer.clear();
         }
 
         /* Feed the wake word */
@@ -413,6 +458,12 @@ void AudioService::OpusCodecTask() {
             packet->timestamp = task->timestamp;
 
             if (opus_encoder_ != nullptr && task->pcm.size() == encoder_frame_size_) {
+#if CONFIG_AEC_PCM_HEX_DUMP
+                if (task->type == kAudioTaskTypeEncodeToSendQueue) {
+                    PcmHexDumper::GetInstance().Capture(PcmDumpChannel::kUpload,
+                        task->pcm.data(), task->pcm.size());
+                }
+#endif
                 std::vector<uint8_t> buf(encoder_outbuf_size_);
                 esp_audio_enc_in_frame_t in = {
                     .buffer = (uint8_t *)(task->pcm.data()),
@@ -585,7 +636,7 @@ void AudioService::EnableWakeWordDetection(bool enable) {
     }
 }
 
-void AudioService::EnableVoiceProcessing(bool enable) {
+void AudioService::EnableVoiceProcessing(bool enable, bool reset_decoder) {
     ESP_LOGD(TAG, "%s voice processing", enable ? "Enabling" : "Disabling");
     if (enable) {
         if (!audio_processor_initialized_) {
@@ -593,8 +644,9 @@ void AudioService::EnableVoiceProcessing(bool enable) {
             audio_processor_initialized_ = true;
         }
 
-        /* We should make sure no audio is playing */
-        ResetDecoder();
+        if (reset_decoder) {
+            ResetDecoder();
+        }
         audio_input_need_warmup_ = true;
         // Reset input resampler to clear cached data from previous mode (e.g. WakeWord)
         // This prevents buffer overflow when switching between different feed sizes
@@ -626,7 +678,9 @@ void AudioService::EnableAudioTesting(bool enable) {
 }
 
 void AudioService::EnableDeviceAec(bool enable) {
+#if CONFIG_AEC_PCM_HEX_DUMP
     ESP_LOGI(TAG, "%s device AEC", enable ? "Enabling" : "Disabling");
+#endif
     if (!audio_processor_initialized_) {
         audio_processor_->Initialize(codec_, OPUS_FRAME_DURATION_MS, models_list_);
         audio_processor_initialized_ = true;
