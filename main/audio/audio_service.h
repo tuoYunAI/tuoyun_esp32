@@ -68,7 +68,7 @@
         .bits_per_sample    = ESP_AUDIO_BIT16,                                                                    \
         .bitrate            = ESP_OPUS_BITRATE_AUTO,                                                              \
         .frame_duration     = (esp_opus_enc_frame_duration_t)AS_OPUS_GET_FRAME_DRU_ENUM(OPUS_FRAME_DURATION_MS),  \
-        .application_mode   = ESP_OPUS_ENC_APPLICATION_AUDIO,                                                     \
+        .application_mode   = ESP_OPUS_ENC_APPLICATION_VOIP,                                                     \
         .complexity         = 0,                                                                                  \
         .enable_fec         = false,                                                                              \
         .enable_dtx         = true,                                                                               \
@@ -121,7 +121,7 @@ public:
     bool IsAfeWakeWord();
 
     void EnableWakeWordDetection(bool enable);
-    void EnableVoiceProcessing(bool enable);
+    void EnableVoiceProcessing(bool enable, bool reset_decoder = true);
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
 

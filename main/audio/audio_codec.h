@@ -9,6 +9,7 @@
 #include <string>
 #include <functional>
 
+#include "aec_tuning_config.h"
 #include "board.h"
 
 #define AUDIO_CODEC_DMA_DESC_NUM 6
@@ -38,6 +39,7 @@ public:
     inline float input_gain() const { return input_gain_; }
     inline bool input_enabled() const { return input_enabled_; }
     inline bool output_enabled() const { return output_enabled_; }
+    inline const AecTuningConfig& aec_tuning_config() const { return aec_tuning_config_; }
 
 protected:
     i2s_chan_handle_t tx_handle_ = nullptr;
@@ -53,6 +55,7 @@ protected:
     int output_channels_ = 1;
     int output_volume_ = 70;
     float input_gain_ = 0.0;
+    AecTuningConfig aec_tuning_config_ = kDefaultAecTuningConfig;
 
     virtual int Read(int16_t* dest, int samples) = 0;
     virtual int Write(const int16_t* data, int samples) = 0;

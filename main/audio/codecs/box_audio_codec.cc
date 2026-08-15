@@ -1,20 +1,40 @@
 #include "box_audio_codec.h"
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <driver/i2c_master.h>
 #include <driver/i2s_tdm.h>
+
+#include <algorithm>
+#include <cstring>
 
 #define TAG "BoxAudioCodec"
 
 BoxAudioCodec::BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int output_sample_rate,
     gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
-    gpio_num_t pa_pin, uint8_t es8311_addr, uint8_t es7210_addr, bool input_reference) {
+    gpio_num_t pa_pin, uint8_t es8311_addr, uint8_t es7210_addr, bool input_reference,
+    bool software_reference, const AecTuningConfig& aec_tuning_config) {
+    aec_tuning_config_ = aec_tuning_config;
     duplex_ = true; // 是否双工
     input_reference_ = input_reference; // 是否使用参考输入，实现回声消除
+    software_reference_ = input_reference_ && software_reference;
     input_channels_ = input_reference_ ? 2 : 1; // 输入通道数
     input_sample_rate_ = input_sample_rate;
     output_sample_rate_ = output_sample_rate;
-    input_gain_ = 30;
+    input_gain_ = aec_tuning_config_.input_gain_db;
+
+    if (software_reference_) {
+        const int reference_buffer_duration_ms =
+            std::max(1, aec_tuning_config_.software_reference_buffer_ms);
+        reference_buffer_.resize(output_sample_rate_ * reference_buffer_duration_ms / 1000);
+        software_reference_delay_samples_ =
+            output_sample_rate_ * std::max(0, aec_tuning_config_.software_reference_delay_ms) / 1000;
+#if CONFIG_AEC_PCM_HEX_DUMP
+        ESP_LOGI(TAG, "Software playback reference enabled, buffer: %d ms, delay: %d ms (%u samples)",
+            reference_buffer_duration_ms, aec_tuning_config_.software_reference_delay_ms,
+            static_cast<unsigned>(software_reference_delay_samples_));
+#endif
+    }
 
     CreateDuplexChannels(mclk, bclk, ws, dout, din);
 
@@ -197,7 +217,7 @@ void BoxAudioCodec::EnableInput(bool enable) {
             .sample_rate = (uint32_t)output_sample_rate_,
             .mclk_multiple = 0,
         };
-        if (input_reference_) {
+        if (input_reference_ && !software_reference_) {
             fs.channel_mask |= ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1);
         }
         ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
@@ -226,20 +246,104 @@ void BoxAudioCodec::EnableOutput(bool enable) {
         ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, output_volume_));
     } else {
         ESP_ERROR_CHECK(esp_codec_dev_close(output_dev_));
+        ClearReference();
     }
     AudioCodec::EnableOutput(enable);
 }
 
 int BoxAudioCodec::Read(int16_t* dest, int samples) {
     if (input_enabled_) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(input_dev_, (void*)dest, samples * sizeof(int16_t)));
+        if (!software_reference_) {
+            ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(input_dev_, (void*)dest, samples * sizeof(int16_t)));
+        } else {
+            const size_t frames = samples / input_channels_;
+            ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(
+                input_dev_, dest, frames * sizeof(int16_t)));
+
+            // Expand the mono mic samples in place before filling the reference channel.
+            for (size_t i = frames; i > 0; --i) {
+                dest[(i - 1) * input_channels_] = dest[i - 1];
+            }
+
+            std::lock_guard<std::mutex> lock(reference_mutex_);
+            for (size_t i = 0; i < frames; ++i) {
+                if (reference_size_ > 0) {
+                    dest[i * input_channels_ + 1] = reference_buffer_[reference_read_pos_];
+                    reference_read_pos_ = (reference_read_pos_ + 1) % reference_buffer_.size();
+                    --reference_size_;
+                } else {
+                    dest[i * input_channels_ + 1] = 0;
+                }
+            }
+            if (reference_size_ == 0) {
+                reference_read_pos_ = 0;
+            }
+        }
     }
     return samples;
 }
 
 int BoxAudioCodec::Write(const int16_t* data, int samples) {
     if (output_enabled_) {
+        PushReference(data, samples);
         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t)));
     }
     return samples;
+}
+
+void BoxAudioCodec::PushReference(const int16_t* data, size_t samples) {
+    if (!software_reference_ || reference_buffer_.empty() || samples == 0) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(reference_mutex_);
+    const size_t capacity = reference_buffer_.size();
+    const int64_t now = esp_timer_get_time();
+    const int64_t reference_burst_gap_us =
+        static_cast<int64_t>(std::max(0, aec_tuning_config_.reference_burst_gap_ms)) * 1000;
+    const bool new_playback_burst = reference_last_push_us_ == 0 ||
+        now - reference_last_push_us_ > reference_burst_gap_us;
+    reference_last_push_us_ = now;
+
+    // Add the calibrated delay once per real playback burst. The FIFO can
+    // briefly drain between continuous packets; adding it again shifts REF by
+    // another full delay and makes the AEC filter lose alignment.
+    if (reference_size_ == 0 && new_playback_burst &&
+            software_reference_delay_samples_ > 0) {
+        const size_t delay_samples = std::min(software_reference_delay_samples_, capacity);
+        std::fill_n(reference_buffer_.data(), delay_samples, 0);
+        reference_read_pos_ = 0;
+        reference_size_ = delay_samples;
+    }
+
+    if (samples >= capacity) {
+        data += samples - capacity;
+        samples = capacity;
+        reference_read_pos_ = 0;
+        reference_size_ = 0;
+    }
+
+    const size_t free_samples = capacity - reference_size_;
+    if (samples > free_samples) {
+        const size_t dropped_samples = samples - free_samples;
+        reference_read_pos_ = (reference_read_pos_ + dropped_samples) % capacity;
+        reference_size_ -= dropped_samples;
+    }
+
+    const size_t write_pos = (reference_read_pos_ + reference_size_) % capacity;
+    const size_t first_part = std::min(samples, capacity - write_pos);
+    memcpy(reference_buffer_.data() + write_pos, data, first_part * sizeof(int16_t));
+    memcpy(reference_buffer_.data(), data + first_part, (samples - first_part) * sizeof(int16_t));
+    reference_size_ += samples;
+}
+
+void BoxAudioCodec::ClearReference() {
+    if (!software_reference_) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(reference_mutex_);
+    reference_read_pos_ = 0;
+    reference_size_ = 0;
+    reference_last_push_us_ = 0;
 }
